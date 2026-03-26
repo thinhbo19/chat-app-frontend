@@ -38,7 +38,6 @@ import {
   Space,
   Spin,
   Switch,
-  Tooltip,
   Typography,
   message,
   notification,
@@ -70,6 +69,8 @@ import type {
 } from "../types";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL;
+
+const BROWSE_PAGE_SIZE = 40;
 
 const { Title, Text } = Typography;
 
@@ -109,7 +110,15 @@ export default function ChatPage() {
   const [incomingRequests, setIncomingRequests] = useState<FriendRequest[]>([]);
   const [outgoingRequests, setOutgoingRequests] = useState<OutgoingFriendRequest[]>([]);
   const [searchText, setSearchText] = useState("");
-  const [searchResults, setSearchResults] = useState<FriendUser[]>([]);
+  const [discoveryList, setDiscoveryList] = useState<FriendUser[]>([]);
+  const [discoveryMode, setDiscoveryMode] = useState<"browse" | "search">("browse");
+  const [browseNextCursor, setBrowseNextCursor] = useState<string | null>(null);
+  const [browseLoading, setBrowseLoading] = useState(false);
+  const [browseLoadingMore, setBrowseLoadingMore] = useState(false);
+  const discoveryListScrollRef = useRef<HTMLDivElement>(null);
+  const discoveryModeRef = useRef<"browse" | "search">("browse");
+  const browseNextCursorRef = useRef<string | null>(null);
+  const browseMoreLockRef = useRef(false);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [pendingImage, setPendingImage] = useState<{ file: File; previewUrl: string } | null>(
@@ -242,6 +251,69 @@ export default function ChatPage() {
     const response = await api.get("/api/friends/requests/outgoing");
     setOutgoingRequests(response.data.requests);
   }, []);
+
+  useEffect(() => {
+    discoveryModeRef.current = discoveryMode;
+  }, [discoveryMode]);
+
+  useEffect(() => {
+    browseNextCursorRef.current = browseNextCursor;
+  }, [browseNextCursor]);
+
+  const fetchBrowse = useCallback(async (after?: string | null) => {
+    const params: Record<string, string | number> = { limit: BROWSE_PAGE_SIZE };
+    if (after) params.after = after;
+    const { data } = await api.get<{ users: FriendUser[]; nextCursor: string | null }>(
+      "/api/users/browse",
+      { params },
+    );
+    return data;
+  }, []);
+
+  const loadBrowseFirstPage = useCallback(async () => {
+    setDiscoveryMode("browse");
+    setBrowseNextCursor(null);
+    browseNextCursorRef.current = null;
+    setBrowseLoading(true);
+    try {
+      const data = await fetchBrowse();
+      setDiscoveryList(data.users);
+      setBrowseNextCursor(data.nextCursor);
+    } catch {
+      message.error(vi.errors.loadUserBrowse);
+      setDiscoveryList([]);
+    } finally {
+      setBrowseLoading(false);
+    }
+  }, [fetchBrowse]);
+
+  const loadBrowseMore = useCallback(async () => {
+    if (discoveryModeRef.current !== "browse") return;
+    const after = browseNextCursorRef.current;
+    if (after == null || browseMoreLockRef.current) return;
+    browseMoreLockRef.current = true;
+    setBrowseLoadingMore(true);
+    try {
+      const data = await fetchBrowse(after);
+      setDiscoveryList((prev) => {
+        const seen = new Set(prev.map((u) => u._id));
+        const extra = data.users.filter((u) => !seen.has(u._id));
+        return [...prev, ...extra];
+      });
+      setBrowseNextCursor(data.nextCursor);
+    } catch {
+      message.error(vi.errors.loadUserBrowse);
+    } finally {
+      setBrowseLoadingMore(false);
+      browseMoreLockRef.current = false;
+    }
+  }, [fetchBrowse]);
+
+  useEffect(() => {
+    if (railPanel !== "search") return;
+    setSearchText("");
+    void loadBrowseFirstPage();
+  }, [railPanel, loadBrowseFirstPage]);
 
   const loadOlderMessages = useCallback(
     async (beforeId: string) => {
@@ -715,17 +787,25 @@ export default function ChatPage() {
   }
 
   async function searchUsers() {
-    if (!searchText.trim()) {
-      setSearchResults([]);
+    const q = searchText.trim();
+    if (!q) {
+      await loadBrowseFirstPage();
       return;
     }
+    setDiscoveryMode("search");
+    setBrowseNextCursor(null);
+    browseNextCursorRef.current = null;
+    setBrowseLoading(true);
     try {
       const response = await api.get("/api/users/search", {
-        params: { q: searchText.trim() },
+        params: { q },
       });
-      setSearchResults(response.data.users);
+      setDiscoveryList(response.data.users);
     } catch (_error) {
       message.error(vi.errors.userNotFound);
+      setDiscoveryList([]);
+    } finally {
+      setBrowseLoading(false);
     }
   }
 
@@ -733,7 +813,7 @@ export default function ChatPage() {
     try {
       await api.post("/api/friends/request", { toUserId });
       message.success(vi.errors.inviteSent);
-      setSearchResults((prev) => prev.filter((item) => item._id !== toUserId));
+      setDiscoveryList((prev) => prev.filter((item) => item._id !== toUserId));
       await loadIncomingRequests();
       await loadFriends();
       await loadOutgoingRequests();
@@ -834,12 +914,12 @@ export default function ChatPage() {
     () => new Set(outgoingRequests.map((item) => item.toUserId._id)),
     [outgoingRequests],
   );
-  const visibleSearchResults = useMemo(
+  const visibleDiscoveryResults = useMemo(
     () =>
-      searchResults.filter(
+      discoveryList.filter(
         (item) => !friendIdSet.has(item._id) && !outgoingIdSet.has(item._id),
       ),
-    [searchResults, friendIdSet, outgoingIdSet],
+    [discoveryList, friendIdSet, outgoingIdSet],
   );
 
   const groupRoomsOnly = useMemo(
@@ -937,39 +1017,67 @@ export default function ChatPage() {
   const searchPanelContent = (
     <Space direction="vertical" style={{ width: "100%" }} size={12}>
       <Text strong>{vi.chat.searchUsersTitle}</Text>
+      <Text type="secondary" style={{ fontSize: 12 }}>
+        {vi.chat.userDiscoveryHint}
+      </Text>
       <Space.Compact style={{ width: "100%" }}>
         <Input
           placeholder={vi.chat.searchPlaceholder}
           value={searchText}
           onChange={(event) => setSearchText(event.target.value)}
-          onPressEnter={searchUsers}
+          onPressEnter={() => void searchUsers()}
         />
-        <Button onClick={searchUsers}>{vi.chat.search}</Button>
+        <Button onClick={() => void searchUsers()}>{vi.chat.search}</Button>
       </Space.Compact>
-      <List
-        size="small"
-        dataSource={visibleSearchResults}
-        locale={{ emptyText: vi.chat.noSearch }}
-        renderItem={(item) => (
-          <List.Item
-            actions={[
-              <Tooltip key="add" title={vi.chat.addFriend}>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<FiUserPlus />}
-                  onClick={() => sendFriendRequest(item._id)}
-                />
-              </Tooltip>,
-            ]}
-          >
-            <List.Item.Meta
-              avatar={<Avatar>{item.username.charAt(0).toUpperCase()}</Avatar>}
-              title={item.username}
+      <div
+        ref={discoveryListScrollRef}
+        className="chat-discovery-scroll"
+        onScroll={(event) => {
+          const el = event.currentTarget;
+          if (discoveryMode !== "browse" || browseNextCursor === null) return;
+          if (browseLoadingMore || browseLoading) return;
+          if (el.scrollHeight - el.scrollTop - el.clientHeight < 72) {
+            void loadBrowseMore();
+          }
+        }}
+      >
+        {browseLoading && discoveryList.length === 0 ? (
+          <Flex justify="center" style={{ padding: 24 }}>
+            <Spin />
+          </Flex>
+        ) : (
+          <>
+            <List
+              size="small"
+              dataSource={visibleDiscoveryResults}
+              locale={{ emptyText: vi.chat.noSearch }}
+              renderItem={(item) => (
+                <List.Item
+                  actions={[
+                    <Button
+                      key="add"
+                      type="text"
+                      size="small"
+                      icon={<FiUserPlus />}
+                      onClick={() => sendFriendRequest(item._id)}
+                    />,
+                  ]}
+                >
+                  <List.Item.Meta
+                    avatar={<Avatar>{item.username.charAt(0).toUpperCase()}</Avatar>}
+                    title={item.username}
+                  />
+                </List.Item>
+              )}
             />
-          </List.Item>
+            {discoveryMode === "browse" && browseLoadingMore ? (
+              <Flex justify="center" style={{ padding: 8 }}>
+                <Spin size="small" />
+              </Flex>
+            ) : null}
+          </>
         )}
-      />
+      </div>
     </Space>
   );
 
@@ -998,23 +1106,21 @@ export default function ChatPage() {
       renderItem={(request) => (
         <List.Item
           actions={[
-            <Tooltip key="accept" title={vi.chat.accept}>
-              <Button
-                size="small"
-                type="text"
-                icon={<FiCheck />}
-                onClick={() => handleRequest(request._id, "accept")}
-              />
-            </Tooltip>,
-            <Tooltip key="reject" title={vi.chat.reject}>
-              <Button
-                size="small"
-                type="text"
-                danger
-                icon={<FiX />}
-                onClick={() => handleRequest(request._id, "reject")}
-              />
-            </Tooltip>,
+            <Button
+              key="accept"
+              size="small"
+              type="text"
+              icon={<FiCheck />}
+              onClick={() => handleRequest(request._id, "accept")}
+            />,
+            <Button
+              key="reject"
+              size="small"
+              type="text"
+              danger
+              icon={<FiX />}
+              onClick={() => handleRequest(request._id, "reject")}
+            />,
           ]}
         >
           <List.Item.Meta
@@ -1057,66 +1163,54 @@ export default function ChatPage() {
       {!isNarrowLayout ? (
         <aside className="chat-rail">
           <div className="chat-rail-stack chat-rail-stack--top">
-            <Tooltip title={vi.chat.railChat}>
-              <span className="chat-rail-btn chat-rail-btn--active">
-                <FiMessageCircle aria-hidden />
-              </span>
-            </Tooltip>
-            <Tooltip title={vi.chat.railOpenSearch}>
+            <span className="chat-rail-btn chat-rail-btn--active">
+              <FiMessageCircle aria-hidden />
+            </span>
+            <button
+              type="button"
+              className={`chat-rail-btn${railPanel === "search" ? " chat-rail-btn--active" : ""}`}
+              onClick={() => toggleRailPanel("search")}
+              aria-pressed={railPanel === "search"}
+            >
+              <FiSearch />
+            </button>
+            <Badge count={outgoingRequests.length} size="small" offset={[-2, 2]}>
               <button
                 type="button"
-                className={`chat-rail-btn${railPanel === "search" ? " chat-rail-btn--active" : ""}`}
-                onClick={() => toggleRailPanel("search")}
-                aria-pressed={railPanel === "search"}
+                className={`chat-rail-btn${railPanel === "outgoing" ? " chat-rail-btn--active" : ""}`}
+                onClick={() => toggleRailPanel("outgoing")}
+                aria-pressed={railPanel === "outgoing"}
               >
-                <FiSearch />
+                <FiClock />
               </button>
-            </Tooltip>
-            <Tooltip title={vi.chat.railOpenOutgoing}>
-              <Badge count={outgoingRequests.length} size="small" offset={[-2, 2]}>
-                <button
-                  type="button"
-                  className={`chat-rail-btn${railPanel === "outgoing" ? " chat-rail-btn--active" : ""}`}
-                  onClick={() => toggleRailPanel("outgoing")}
-                  aria-pressed={railPanel === "outgoing"}
-                >
-                  <FiClock />
-                </button>
-              </Badge>
-            </Tooltip>
-            <Tooltip title={vi.chat.railOpenIncoming}>
-              <Badge count={incomingRequests.length} size="small" offset={[-2, 2]}>
-                <button
-                  type="button"
-                  className={`chat-rail-btn${railPanel === "incoming" ? " chat-rail-btn--active" : ""}`}
-                  onClick={() => toggleRailPanel("incoming")}
-                  aria-pressed={railPanel === "incoming"}
-                >
-                  <FiInbox />
-                </button>
-              </Badge>
-            </Tooltip>
+            </Badge>
+            <Badge count={incomingRequests.length} size="small" offset={[-2, 2]}>
+              <button
+                type="button"
+                className={`chat-rail-btn${railPanel === "incoming" ? " chat-rail-btn--active" : ""}`}
+                onClick={() => toggleRailPanel("incoming")}
+                aria-pressed={railPanel === "incoming"}
+              >
+                <FiInbox />
+              </button>
+            </Badge>
           </div>
           <div className="chat-rail-stack chat-rail-stack--bottom">
-            <Tooltip title={settingsDrawerOpen ? vi.chat.settingsClose : vi.chat.settingsOpen}>
-              <button
-                type="button"
-                className={`chat-rail-btn${settingsDrawerOpen ? " chat-rail-btn--active" : ""}`}
-                onClick={toggleSettingsFromRail}
-                aria-pressed={settingsDrawerOpen}
-              >
-                <FiSettings />
-              </button>
-            </Tooltip>
-            <Tooltip title={vi.chat.logout}>
-              <button
-                type="button"
-                className="chat-rail-btn chat-rail-btn--danger"
-                onClick={() => void handleLogout()}
-              >
-                <FiLogOut />
-              </button>
-            </Tooltip>
+            <button
+              type="button"
+              className={`chat-rail-btn${settingsDrawerOpen ? " chat-rail-btn--active" : ""}`}
+              onClick={toggleSettingsFromRail}
+              aria-pressed={settingsDrawerOpen}
+            >
+              <FiSettings />
+            </button>
+            <button
+              type="button"
+              className="chat-rail-btn chat-rail-btn--danger"
+              onClick={() => void handleLogout()}
+            >
+              <FiLogOut />
+            </button>
           </div>
         </aside>
       ) : null}
@@ -1187,71 +1281,59 @@ export default function ChatPage() {
         <nav className="chat-mobile-top-nav">
           <div className="chat-mobile-top-nav-inner">
             <div className="chat-mobile-top-nav-group">
-              <Tooltip title={mobileLeftOpen ? vi.chat.extraClose : vi.chat.sidebarMenu}>
+              <button
+                type="button"
+                className={`chat-mobile-top-nav-btn${mobileLeftOpen ? " chat-mobile-top-nav-btn--active" : ""}`}
+                onClick={toggleMobileSidebar}
+                aria-pressed={mobileLeftOpen}
+              >
+                <FiMenu aria-hidden />
+              </button>
+              <button
+                type="button"
+                className={`chat-mobile-top-nav-btn${railPanel === "search" ? " chat-mobile-top-nav-btn--active" : ""}`}
+                onClick={() => toggleRailPanel("search")}
+                aria-pressed={railPanel === "search"}
+              >
+                <FiSearch aria-hidden />
+              </button>
+              <Badge count={outgoingRequests.length} size="small" offset={[-2, 2]}>
                 <button
                   type="button"
-                  className={`chat-mobile-top-nav-btn${mobileLeftOpen ? " chat-mobile-top-nav-btn--active" : ""}`}
-                  onClick={toggleMobileSidebar}
-                  aria-pressed={mobileLeftOpen}
+                  className={`chat-mobile-top-nav-btn${railPanel === "outgoing" ? " chat-mobile-top-nav-btn--active" : ""}`}
+                  onClick={() => toggleRailPanel("outgoing")}
+                  aria-pressed={railPanel === "outgoing"}
                 >
-                  <FiMenu aria-hidden />
+                  <FiClock aria-hidden />
                 </button>
-              </Tooltip>
-              <Tooltip title={vi.chat.railOpenSearch}>
+              </Badge>
+              <Badge count={incomingRequests.length} size="small" offset={[-2, 2]}>
                 <button
                   type="button"
-                  className={`chat-mobile-top-nav-btn${railPanel === "search" ? " chat-mobile-top-nav-btn--active" : ""}`}
-                  onClick={() => toggleRailPanel("search")}
-                  aria-pressed={railPanel === "search"}
+                  className={`chat-mobile-top-nav-btn${railPanel === "incoming" ? " chat-mobile-top-nav-btn--active" : ""}`}
+                  onClick={() => toggleRailPanel("incoming")}
+                  aria-pressed={railPanel === "incoming"}
                 >
-                  <FiSearch aria-hidden />
+                  <FiInbox aria-hidden />
                 </button>
-              </Tooltip>
-              <Tooltip title={vi.chat.railOpenOutgoing}>
-                <Badge count={outgoingRequests.length} size="small" offset={[-2, 2]}>
-                  <button
-                    type="button"
-                    className={`chat-mobile-top-nav-btn${railPanel === "outgoing" ? " chat-mobile-top-nav-btn--active" : ""}`}
-                    onClick={() => toggleRailPanel("outgoing")}
-                    aria-pressed={railPanel === "outgoing"}
-                  >
-                    <FiClock aria-hidden />
-                  </button>
-                </Badge>
-              </Tooltip>
-              <Tooltip title={vi.chat.railOpenIncoming}>
-                <Badge count={incomingRequests.length} size="small" offset={[-2, 2]}>
-                  <button
-                    type="button"
-                    className={`chat-mobile-top-nav-btn${railPanel === "incoming" ? " chat-mobile-top-nav-btn--active" : ""}`}
-                    onClick={() => toggleRailPanel("incoming")}
-                    aria-pressed={railPanel === "incoming"}
-                  >
-                    <FiInbox aria-hidden />
-                  </button>
-                </Badge>
-              </Tooltip>
+              </Badge>
             </div>
             <div className="chat-mobile-top-nav-group chat-mobile-top-nav-group--end">
-              <Tooltip title={settingsDrawerOpen ? vi.chat.settingsClose : vi.chat.settingsOpen}>
-                <button
-                  type="button"
-                  className={`chat-mobile-top-nav-btn${settingsDrawerOpen ? " chat-mobile-top-nav-btn--active" : ""}`}
-                  onClick={toggleSettingsFromRail}
-                  aria-pressed={settingsDrawerOpen}
-                >
-                  <FiSettings aria-hidden />
-                </button>
-              </Tooltip>
-              <Tooltip title={vi.chat.logout}>
-                <button
-                  type="button"
-                  className="chat-mobile-top-nav-btn chat-mobile-top-nav-btn--danger"
-                  onClick={() => void handleLogout()}
-                >
-                  <FiLogOut aria-hidden />
-                </button>
-              </Tooltip>
+              <button
+                type="button"
+                className={`chat-mobile-top-nav-btn${settingsDrawerOpen ? " chat-mobile-top-nav-btn--active" : ""}`}
+                onClick={toggleSettingsFromRail}
+                aria-pressed={settingsDrawerOpen}
+              >
+                <FiSettings aria-hidden />
+              </button>
+              <button
+                type="button"
+                className="chat-mobile-top-nav-btn chat-mobile-top-nav-btn--danger"
+                onClick={() => void handleLogout()}
+              >
+                <FiLogOut aria-hidden />
+              </button>
             </div>
           </div>
         </nav>
@@ -1297,29 +1379,23 @@ export default function ChatPage() {
               </Flex>
             </Flex>
             <Space size={8} wrap className="chat-header-actions">
-              <Tooltip title={vi.chat.callAudio}>
-                <Button
-                  className="chat-header-icon-btn"
-                  shape="circle"
-                  icon={<FiPhone />}
-                />
-              </Tooltip>
-              <Tooltip title={vi.chat.callVideo}>
-                <Button
-                  className="chat-header-icon-btn"
-                  shape="circle"
-                  icon={<FiCamera />}
-                />
-              </Tooltip>
-              <Tooltip title={vi.chat.roomInfo}>
-                <Button
-                  className="chat-header-icon-btn"
-                  shape="circle"
-                  icon={<FiInfo />}
-                  onClick={() => setIsRoomInfoOpen(true)}
-                  disabled={!selectedRoom}
-                />
-              </Tooltip>
+              <Button
+                className="chat-header-icon-btn"
+                shape="circle"
+                icon={<FiPhone />}
+              />
+              <Button
+                className="chat-header-icon-btn"
+                shape="circle"
+                icon={<FiCamera />}
+              />
+              <Button
+                className="chat-header-icon-btn"
+                shape="circle"
+                icon={<FiInfo />}
+                onClick={() => setIsRoomInfoOpen(true)}
+                disabled={!selectedRoom}
+              />
             </Space>
           </Flex>
 
@@ -1474,15 +1550,14 @@ export default function ChatPage() {
             renderItem={(friend) => (
               <List.Item
                 actions={[
-                  <Tooltip key="add-to-group" title={vi.chat.addToGroup}>
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<FiUserPlus />}
-                      loading={addingMemberId === friend._id}
-                      onClick={() => addMemberToGroup(friend._id)}
-                    />
-                  </Tooltip>,
+                  <Button
+                    key="add-to-group"
+                    type="text"
+                    size="small"
+                    icon={<FiUserPlus />}
+                    loading={addingMemberId === friend._id}
+                    onClick={() => addMemberToGroup(friend._id)}
+                  />,
                 ]}
               >
                 <List.Item.Meta

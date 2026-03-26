@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import { FiFilm, FiImage, FiMic, FiSend, FiX } from "react-icons/fi";
-import { Button, Flex, Input, Popover, Space, Tooltip } from "antd";
+import { Button, Flex, Input, Popover, Space } from "antd";
 import { vi } from "../../strings/vi";
 
 const EmojiPicker = lazy(() => import("emoji-picker-react"));
@@ -118,36 +118,30 @@ const ChatComposeRowInner = forwardRef<ChatComposeRowHandle, ChatComposeRowProps
                 <span className="chat-emoji-trigger">🙂</span>
               </Button>
             </Popover>
-            <Tooltip title={vi.compose.sendImage}>
-              <Button
-                type="default"
-                className="chat-compose-tool-btn"
-                icon={<FiImage />}
-                loading={uploadingMedia}
-                disabled={!selectedRoomId}
-                onClick={onPickImage}
-              />
-            </Tooltip>
-            <Tooltip title={vi.compose.sendVideo}>
-              <Button
-                type="default"
-                className="chat-compose-tool-btn"
-                icon={<FiFilm />}
-                loading={uploadingMedia}
-                disabled={!selectedRoomId}
-                onClick={onPickVideo}
-              />
-            </Tooltip>
-            <Tooltip title={vi.compose.sendAudio}>
-              <Button
-                type="default"
-                className="chat-compose-tool-btn"
-                icon={<FiMic />}
-                loading={uploadingMedia}
-                disabled={!selectedRoomId}
-                onClick={onPickAudio}
-              />
-            </Tooltip>
+            <Button
+              type="default"
+              className="chat-compose-tool-btn"
+              icon={<FiImage />}
+              loading={uploadingMedia}
+              disabled={!selectedRoomId}
+              onClick={onPickImage}
+            />
+            <Button
+              type="default"
+              className="chat-compose-tool-btn"
+              icon={<FiFilm />}
+              loading={uploadingMedia}
+              disabled={!selectedRoomId}
+              onClick={onPickVideo}
+            />
+            <Button
+              type="default"
+              className="chat-compose-tool-btn"
+              icon={<FiMic />}
+              loading={uploadingMedia}
+              disabled={!selectedRoomId}
+              onClick={onPickAudio}
+            />
           </Space>
           <Input.TextArea
             className="chat-compose-input"
