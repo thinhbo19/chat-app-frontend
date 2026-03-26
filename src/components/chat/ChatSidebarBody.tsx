@@ -1,6 +1,7 @@
-import { FiUserMinus } from "react-icons/fi";
+import { FiHash, FiUserMinus, FiUsers } from "react-icons/fi";
 import { Badge, Button, Divider, Input, List, Popconfirm, Space, Tag, Typography } from "antd";
 import { AvatarWithStatus } from "../AvatarWithStatus";
+import { vi } from "../../strings/vi";
 import type { FriendUser, Room } from "../../types";
 
 const { Text } = Typography;
@@ -38,16 +39,19 @@ export function ChatSidebarBody({
 }: ChatSidebarBodyProps) {
   return (
     <Space direction="vertical" style={{ width: "100%" }} size={12}>
-      <Text strong>Rooms</Text>
+      <Text strong className="sidebar-section-title">
+        <FiHash className="sidebar-section-icon" aria-hidden />
+        {vi.sidebar.groupRoomsTitle}
+      </Text>
       <Space.Compact style={{ width: "100%" }}>
         <Input
-          placeholder="Ten room moi"
+          placeholder={vi.sidebar.newRoomPlaceholder}
           value={roomName}
           onChange={(event) => onRoomNameChange(event.target.value)}
           onPressEnter={onCreateRoom}
         />
         <Button type="primary" onClick={onCreateRoom}>
-          Tao
+          {vi.sidebar.createBtn}
         </Button>
       </Space.Compact>
 
@@ -55,7 +59,7 @@ export function ChatSidebarBody({
         size="small"
         bordered
         dataSource={groupRoomsOnly}
-        locale={{ emptyText: "Chua co room nhom" }}
+        locale={{ emptyText: vi.sidebar.noGroupRooms }}
         renderItem={(room) => {
           const n = unreadByRoomId[room._id] ?? 0;
           return (
@@ -79,11 +83,14 @@ export function ChatSidebarBody({
       />
 
       <Divider style={{ margin: "8px 0" }} />
-      <Text strong>Ban be ({friends.length})</Text>
+      <Text strong className="sidebar-section-title">
+        <FiUsers className="sidebar-section-icon" aria-hidden />
+        {vi.sidebar.friends(friends.length)}
+      </Text>
       <List
         size="small"
         dataSource={friends}
-        locale={{ emptyText: "Chua co ban be" }}
+        locale={{ emptyText: vi.sidebar.noFriends }}
         renderItem={(friend) => {
           const n = unreadByFriendId[friend._id] ?? 0;
           const online = friend.status === "online";
@@ -99,10 +106,10 @@ export function ChatSidebarBody({
               actions={[
                 <Popconfirm
                   key="remove"
-                  title="Xoa ket ban?"
-                  description={`Ban chac chan muon xoa ${friend.username}?`}
-                  okText="Xoa"
-                  cancelText="Huy"
+                  title={vi.sidebar.unfriendTitle}
+                  description={vi.sidebar.unfriendDesc(friend.username)}
+                  okText={vi.sidebar.delete}
+                  cancelText={vi.sidebar.cancel}
                   onConfirm={() => onRemoveFriend(friend._id)}
                 >
                   <Button
@@ -111,7 +118,7 @@ export function ChatSidebarBody({
                     size="small"
                     icon={<FiUserMinus />}
                     onClick={(event) => event.stopPropagation()}
-                    aria-label="Xoa ban"
+                    aria-label={vi.sidebar.removeFriendAria}
                   />
                 </Popconfirm>,
               ]}

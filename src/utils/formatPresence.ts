@@ -1,25 +1,25 @@
-/** Hien thi phu de duoi ten chat 1-1: online hoac offline bao lau. */
+/** Hiển thị phụ đề dưới tên chat 1-1: online hoặc offline bao lâu. */
 export function formatChatHeaderPresence(
   status: "online" | "offline" | undefined,
   lastSeenAt: string | undefined,
 ): string {
   if (status === "online") {
-    return "Online";
+    return "Đang hoạt động";
   }
   if (!lastSeenAt) {
-    return "Offline";
+    return "Ngoại tuyến";
   }
   const ms = Date.now() - new Date(lastSeenAt).getTime();
-  if (ms < 0) return "Offline";
+  if (ms < 0) return "Ngoại tuyến";
   const minutes = Math.floor(ms / 60_000);
-  if (minutes < 1) return "Offline (vua moi)";
+  if (minutes < 1) return "Ngoại tuyến (vừa xong)";
   if (minutes < 60) {
-    return `Offline ${minutes} phut truoc`;
+    return `Ngoại tuyến ${minutes} phút trước`;
   }
   const hours = Math.floor(minutes / 60);
   if (hours < 48) {
-    return `Offline ${hours} gio truoc`;
+    return `Ngoại tuyến ${hours} giờ trước`;
   }
   const days = Math.floor(hours / 24);
-  return `Offline ${days} ngay truoc`;
+  return `Ngoại tuyến ${days} ngày trước`;
 }

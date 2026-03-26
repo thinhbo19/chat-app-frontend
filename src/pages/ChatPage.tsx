@@ -1,19 +1,32 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { ChatComposeRow, type ChatComposeRowHandle } from "../components/chat/ChatComposeRow";
 import { io, Socket } from "socket.io-client";
 import {
   FiCamera,
   FiCheck,
-  FiChevronLeft,
-  FiChevronRight,
+  FiClock,
+  FiInbox,
   FiInfo,
   FiLogOut,
   FiMenu,
+  FiMessageCircle,
   FiPhone,
+  FiSearch,
+  FiSettings,
   FiUserPlus,
   FiX,
 } from "react-icons/fi";
 import {
   Avatar,
+  Badge,
   Button,
   Card,
   Divider,
@@ -41,13 +54,11 @@ const ChatSidebarBody = lazy(() =>
 const ChatMessageList = lazy(() =>
   import("../components/chat/ChatMessageList").then((m) => ({ default: m.ChatMessageList })),
 );
-const ChatComposeRow = lazy(() =>
-  import("../components/chat/ChatComposeRow").then((m) => ({ default: m.ChatComposeRow })),
-);
 import { useChatSettings } from "../context/ChatSettingsContext";
 import { getApiErrorMessage } from "../utils/apiError";
 import { formatChatHeaderPresence } from "../utils/formatPresence";
 import { playMessageBeep, unlockMessageAudio } from "../utils/messageSound";
+import { vi } from "../strings/vi";
 import type {
   ChatMessage,
   ChatMessageContentType,
@@ -67,7 +78,7 @@ function getRoomDisplayName(room: Room, myUserId: string) {
     return room.name;
   }
   const counterpart = room.members.find((member) => member.userId._id !== myUserId)?.userId;
-  return counterpart?.username ? `${counterpart.username}` : "Chat 1-1";
+  return counterpart?.username ? `${counterpart.username}` : vi.chat.directFallback;
 }
 
 export default function ChatPage() {
@@ -82,14 +93,16 @@ export default function ChatPage() {
     setSoundNotify,
     requestNotificationPermission,
   } = useChatSettings();
-  const [isExtraMenuOpen, setIsExtraMenuOpen] = useState(false);
+  /** Desktop rail: một panel trái tại một thời điểm (tìm kiếm / chờ / lời mời). */
+  const [railPanel, setRailPanel] = useState<null | "search" | "outgoing" | "incoming">(null);
+  const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   const [isRoomInfoOpen, setIsRoomInfoOpen] = useState(false);
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [addingMemberId, setAddingMemberId] = useState("");
   const [rooms, setRooms] = useState<Room[]>([]);
   const [selectedRoomId, setSelectedRoomId] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [messageInput, setMessageInput] = useState("");
+  const composeRef = useRef<ChatComposeRowHandle>(null);
   const [roomName, setRoomName] = useState("");
 
   const [friends, setFriends] = useState<FriendUser[]>([]);
@@ -110,7 +123,8 @@ export default function ChatPage() {
 
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isNarrowLayout, setIsNarrowLayout] = useState(false);
-  const [sidebarDrawerOpen, setSidebarDrawerOpen] = useState(false);
+  /** Mobile (narrow): single left drawer = sidebar + cài đặt/tìm kiếm. Desktop: chỉ dùng cho drawer phụ. */
+  const [mobileLeftOpen, setMobileLeftOpen] = useState(false);
   const [readStates, setReadStates] = useState<RoomReadStateEntry[]>([]);
   const [messagesHasMore, setMessagesHasMore] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -159,7 +173,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (!isNarrowLayout) {
-      setSidebarDrawerOpen(false);
+      setMobileLeftOpen(false);
     }
   }, [isNarrowLayout]);
 
@@ -251,7 +265,7 @@ export default function ChatPage() {
           if (el) el.scrollTop = el.scrollHeight - prevScrollHeight;
         });
       } catch {
-        message.error("Khong tai them tin nhan cu");
+        message.error(vi.errors.loadOlder);
       } finally {
         setLoadingOlder(false);
       }
@@ -260,10 +274,10 @@ export default function ChatPage() {
   );
 
   useEffect(() => {
-    loadRooms().catch(() => message.error("Khong tai duoc danh sach room"));
-    loadFriends().catch(() => message.error("Khong tai duoc danh sach ban be"));
-    loadIncomingRequests().catch(() => message.error("Khong tai duoc loi moi ket ban"));
-    loadOutgoingRequests().catch(() => message.error("Khong tai duoc danh sach cho"));
+    loadRooms().catch(() => message.error(vi.errors.loadRooms));
+    loadFriends().catch(() => message.error(vi.errors.loadFriends));
+    loadIncomingRequests().catch(() => message.error(vi.errors.loadIncoming));
+    loadOutgoingRequests().catch(() => message.error(vi.errors.loadOutgoing));
   }, [loadFriends, loadIncomingRequests, loadOutgoingRequests, loadRooms]);
 
   useEffect(() => {
@@ -277,15 +291,15 @@ export default function ChatPage() {
       if (latestToken) {
         socket.auth = { token: latestToken };
       }
-      message.error(`Socket loi: ${error.message}`);
+      message.error(vi.errors.socket(error.message));
     };
 
     function previewIncoming(m: ChatMessage) {
-      if (m.deleted) return "Tin nhan da duoc thu hoi";
-      if (m.contentType === "image") return "Hinh anh";
-      if (m.contentType === "video") return "Video";
-      if (m.contentType === "audio") return "Am thanh";
-      return (m.text || "").slice(0, 120) || "Tin nhan";
+      if (m.deleted) return vi.preview.recalled;
+      if (m.contentType === "image") return vi.preview.image;
+      if (m.contentType === "video") return vi.preview.video;
+      if (m.contentType === "audio") return vi.preview.audio;
+      return (m.text || "").slice(0, 120) || vi.preview.message;
     }
 
     const handleNewMessage = (incoming: ChatMessage) => {
@@ -392,13 +406,13 @@ export default function ChatPage() {
     const handleSystemMessage = () => null;
     const handleFriendRequestReceived = () => {
       loadIncomingRequests().catch(() => null);
-      message.info("Ban vua nhan duoc loi moi ket ban moi");
+      message.info(vi.notify.friendRequest);
     };
     const handleFriendshipUpdated = () => {
       loadFriends().catch(() => null);
       loadIncomingRequests().catch(() => null);
       loadOutgoingRequests().catch(() => null);
-      message.success("Danh sach ban be da duoc cap nhat");
+      message.success(vi.notify.friendsUpdated);
     };
     const handleFriendRequestUpdated = () => {
       loadIncomingRequests().catch(() => null);
@@ -407,7 +421,7 @@ export default function ChatPage() {
     const handleFriendshipRemoved = () => {
       loadFriends().catch(() => null);
       loadOutgoingRequests().catch(() => null);
-      message.info("Mot moi quan he ban be vua bi xoa");
+      message.info(vi.notify.friendshipRemoved);
     };
     const handleFriendDataChanged = () => {
       loadFriends().catch(() => null);
@@ -508,7 +522,7 @@ export default function ChatPage() {
         setReadStates(readRes.data.states);
         setUnreadByRoomId((prev) => ({ ...prev, [selectedRoomId]: 0 }));
       } catch {
-        if (!cancelled) message.error("Khong tai duoc lich su tin nhan");
+        if (!cancelled) message.error(vi.errors.loadHistory);
       }
     })();
 
@@ -521,7 +535,7 @@ export default function ChatPage() {
         { roomId: selectedRoomId },
         (response: { ok: boolean; error?: string }) => {
           if (!response?.ok && !cancelled) {
-            message.error(response?.error || "Khong vao duoc room");
+            message.error(response?.error || vi.errors.joinRoom);
           }
         },
       );
@@ -550,6 +564,7 @@ export default function ChatPage() {
   }, [selectedRoomId, messages]);
 
   useEffect(() => {
+    composeRef.current?.clear();
     setPendingImage((prev) => {
       if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
       return null;
@@ -568,7 +583,7 @@ export default function ChatPage() {
     try {
       await api.delete(`/api/rooms/${selectedRoomId}/messages/${messageId}`);
     } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, "Thu hoi that bai"));
+      message.error(getApiErrorMessage(error, vi.errors.recall));
     }
   }
 
@@ -579,9 +594,9 @@ export default function ChatPage() {
       await api.post("/api/rooms", { name: trimmed });
       setRoomName("");
       await loadRooms();
-      message.success("Tao room thanh cong");
+      message.success(vi.errors.createRoomOk);
     } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, "Tao room that bai"));
+      message.error(getApiErrorMessage(error, vi.errors.createRoomFail));
     }
   }
 
@@ -597,7 +612,7 @@ export default function ChatPage() {
           "/api/messages/upload",
           formData,
         );
-        const caption = messageInput.trim();
+        const caption = composeRef.current?.getText().trim() ?? "";
         socket.emit(
           "send_message",
           {
@@ -608,24 +623,24 @@ export default function ChatPage() {
           },
           (res: { ok: boolean; error?: string }) => {
             if (!res?.ok) {
-              message.error(res?.error || "Gui anh that bai");
+              message.error(res?.error || vi.errors.sendImageFail);
               return;
             }
-            setMessageInput("");
+            composeRef.current?.clear();
             clearPendingImage();
           },
         );
       } catch (_error) {
-        message.error("Tai anh len that bai");
+        message.error(vi.errors.uploadImageFail);
       } finally {
         setUploadingMedia(false);
       }
       return;
     }
 
-    const trimmed = messageInput.trim();
+    const trimmed = composeRef.current?.getText().trim() ?? "";
     if (!trimmed) {
-      message.warning("Nhap tin nhan hoac chon anh");
+      message.warning(vi.errors.needTextOrMedia);
       return;
     }
 
@@ -634,17 +649,17 @@ export default function ChatPage() {
       { roomId: selectedRoomId, contentType: "text" as const, text: trimmed, mediaUrl: "" },
       (response: { ok: boolean; error?: string }) => {
         if (!response?.ok) {
-          message.error(response?.error || "Gui tin nhan that bai");
+          message.error(response?.error || vi.errors.sendTextFail);
           return;
         }
-        setMessageInput("");
+        composeRef.current?.clear();
       },
     );
   }
 
   async function uploadAndEmitMedia(file: File) {
     if (!selectedRoomId || !socket) {
-      message.warning("Chon room truoc");
+      message.warning(vi.errors.pickRoom);
       return;
     }
     const formData = new FormData();
@@ -655,7 +670,7 @@ export default function ChatPage() {
         "/api/messages/upload",
         formData,
       );
-      const caption = messageInput.trim();
+      const caption = composeRef.current?.getText().trim() ?? "";
       socket.emit(
         "send_message",
         {
@@ -666,14 +681,14 @@ export default function ChatPage() {
         },
         (res: { ok: boolean; error?: string }) => {
           if (!res?.ok) {
-            message.error(res?.error || "Gui file that bai");
+            message.error(res?.error || vi.errors.sendFileFail);
             return;
           }
-          setMessageInput("");
+          composeRef.current?.clear();
         },
       );
     } catch (_error) {
-      message.error("Tai file len that bai");
+      message.error(vi.errors.uploadFileFail);
     } finally {
       setUploadingMedia(false);
     }
@@ -684,7 +699,7 @@ export default function ChatPage() {
     event.target.value = "";
     if (!file) return;
     if (!file.type.startsWith("image/")) {
-      message.warning("Vui long chon file anh");
+      message.warning(vi.errors.pickImageFile);
       return;
     }
     setPendingImage((prev) => {
@@ -710,41 +725,41 @@ export default function ChatPage() {
       });
       setSearchResults(response.data.users);
     } catch (_error) {
-      message.error("Khong tim duoc user");
+      message.error(vi.errors.userNotFound);
     }
   }
 
   async function sendFriendRequest(toUserId: string) {
     try {
       await api.post("/api/friends/request", { toUserId });
-      message.success("Da gui loi moi ket ban");
+      message.success(vi.errors.inviteSent);
       setSearchResults((prev) => prev.filter((item) => item._id !== toUserId));
       await loadIncomingRequests();
       await loadFriends();
       await loadOutgoingRequests();
     } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, "Gui loi moi that bai"));
+      message.error(getApiErrorMessage(error, vi.errors.inviteFail));
     }
   }
 
   async function handleRequest(requestId: string, action: "accept" | "reject") {
     try {
       await api.post(`/api/friends/request/${requestId}/${action}`);
-      message.success(action === "accept" ? "Da chap nhan loi moi" : "Da tu choi loi moi");
+      message.success(action === "accept" ? vi.errors.accepted : vi.errors.rejected);
       await loadIncomingRequests();
       await loadFriends();
     } catch (_error) {
-      message.error("Cap nhat loi moi that bai");
+      message.error(vi.errors.requestUpdateFail);
     }
   }
 
   async function removeFriend(friendUserId: string) {
     try {
       await api.delete(`/api/friends/${friendUserId}`);
-      message.success("Da xoa ket ban");
+      message.success(vi.errors.unfriendOk);
       await loadFriends();
     } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, "Xoa ket ban that bai"));
+      message.error(getApiErrorMessage(error, vi.errors.unfriendFail));
     }
   }
 
@@ -755,10 +770,10 @@ export default function ChatPage() {
       await loadRooms();
       setSelectedRoomId(room._id);
       if (isNarrowLayout) {
-        setSidebarDrawerOpen(false);
+        setMobileLeftOpen(false);
       }
     } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, "Khong mo duoc room chat 1-1"));
+      message.error(getApiErrorMessage(error, vi.errors.openDirectFail));
     }
   }
 
@@ -774,10 +789,10 @@ export default function ChatPage() {
     try {
       setAddingMemberId(memberUserId);
       await api.post(`/api/rooms/${selectedRoom._id}/members`, { memberUserId });
-      message.success("Da them thanh vien vao nhom");
+      message.success(vi.errors.memberAdded);
       await loadRooms();
     } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, "Them thanh vien that bai"));
+      message.error(getApiErrorMessage(error, vi.errors.memberAddFail));
     } finally {
       setAddingMemberId("");
     }
@@ -786,7 +801,7 @@ export default function ChatPage() {
   const selectedRoom = rooms.find((room) => room._id === selectedRoomId);
   const currentRoomName = selectedRoom
     ? getRoomDisplayName(selectedRoom, user?._id || "")
-    : "Chua chon room";
+    : vi.chat.noRoom;
   const currentUserId = user?._id || "";
   const directCounterpart = useMemo(() => {
     if (!selectedRoom || selectedRoom.type !== "direct") {
@@ -856,8 +871,8 @@ export default function ChatPage() {
   const sidebarBody = (
     <Suspense
       fallback={
-        <div style={{ padding: 24, textAlign: "center" }}>
-          <Spin />
+        <div className="chat-sidebar-suspense" role="status" aria-live="polite">
+          <Spin tip={vi.chat.loadingSidebar} />
         </div>
       }
     >
@@ -870,7 +885,7 @@ export default function ChatPage() {
         onSelectRoom={(roomId) => {
           setSelectedRoomId(roomId);
           if (isNarrowLayout) {
-            setSidebarDrawerOpen(false);
+            setMobileLeftOpen(false);
           }
         }}
         myUserId={user?._id || ""}
@@ -884,27 +899,243 @@ export default function ChatPage() {
     </Suspense>
   );
 
-  const sidebarCardTitle = `Xin chao, ${user?.username || ""}`;
-  const sidebarCardExtra = (
-    <Tooltip title="Dang xuat">   
-      <Button danger size="small" onClick={handleLogout}>
-        <FiLogOut aria-label="Dang xuat"/>
-      </Button>
-    </Tooltip>
+  const sidebarCardTitle = vi.chat.greeting(user?.username || "");
+
+  const settingsDrawerContent = (
+    <Space direction="vertical" style={{ width: "100%" }} size={12}>
+      <Flex justify="space-between" align="center" wrap="wrap" gap={8}>
+        <Text>{vi.chat.themeDark}</Text>
+        <Switch
+          checked={theme === "dark"}
+          onChange={(checked) => setTheme(checked ? "dark" : "light")}
+        />
+      </Flex>
+      <Flex justify="space-between" align="center" wrap="wrap" gap={8}>
+        <Text>{vi.chat.desktopNotify}</Text>
+        <Switch
+          checked={desktopNotify}
+          onChange={async (checked) => {
+            if (checked) {
+              const p = await requestNotificationPermission();
+              if (p !== "granted") {
+                message.warning(vi.chat.notifyDenied);
+                return;
+              }
+            }
+            setDesktopNotify(checked);
+          }}
+        />
+      </Flex>
+      <Flex justify="space-between" align="center" wrap="wrap" gap={8}>
+        <Text>{vi.chat.soundNotify}</Text>
+        <Switch checked={soundNotify} onChange={setSoundNotify} />
+      </Flex>
+      <Text type="secondary">{vi.chat.languageNote}</Text>
+    </Space>
   );
 
-  return (
-    <Flex className="chat-layout" vertical={isNarrowLayout} gap={isNarrowLayout ? 12 : 16}>
-      <Button
-        className="extra-menu-trigger"
-        shape="circle"
-        type="default"
-        icon={isExtraMenuOpen ? <FiChevronLeft /> : <FiChevronRight />}
-        onClick={() => setIsExtraMenuOpen((prev) => !prev)}
-        aria-label={isExtraMenuOpen ? "Dong menu mo rong" : "Mo menu mo rong"}
+  const searchPanelContent = (
+    <Space direction="vertical" style={{ width: "100%" }} size={12}>
+      <Text strong>{vi.chat.searchUsersTitle}</Text>
+      <Space.Compact style={{ width: "100%" }}>
+        <Input
+          placeholder={vi.chat.searchPlaceholder}
+          value={searchText}
+          onChange={(event) => setSearchText(event.target.value)}
+          onPressEnter={searchUsers}
+        />
+        <Button onClick={searchUsers}>{vi.chat.search}</Button>
+      </Space.Compact>
+      <List
+        size="small"
+        dataSource={visibleSearchResults}
+        locale={{ emptyText: vi.chat.noSearch }}
+        renderItem={(item) => (
+          <List.Item
+            actions={[
+              <Tooltip key="add" title={vi.chat.addFriend}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<FiUserPlus />}
+                  onClick={() => sendFriendRequest(item._id)}
+                  aria-label={vi.chat.addFriend}
+                />
+              </Tooltip>,
+            ]}
+          >
+            <List.Item.Meta
+              avatar={<Avatar>{item.username.charAt(0).toUpperCase()}</Avatar>}
+              title={item.username}
+            />
+          </List.Item>
+        )}
       />
+    </Space>
+  );
+
+  const outgoingPanelContent = (
+    <List
+      size="small"
+      dataSource={outgoingRequests}
+      locale={{ emptyText: vi.chat.outgoingEmpty }}
+      renderItem={(request) => (
+        <List.Item>
+          <List.Item.Meta
+            avatar={<Avatar>{request.toUserId.username.charAt(0).toUpperCase()}</Avatar>}
+            title={request.toUserId.username}
+            description={vi.chat.waitingAccept}
+          />
+        </List.Item>
+      )}
+    />
+  );
+
+  const incomingPanelContent = (
+    <List
+      size="small"
+      dataSource={incomingRequests}
+      locale={{ emptyText: vi.chat.incomingEmpty }}
+      renderItem={(request) => (
+        <List.Item
+          actions={[
+            <Tooltip key="accept" title={vi.chat.accept}>
+              <Button
+                size="small"
+                type="text"
+                icon={<FiCheck />}
+                onClick={() => handleRequest(request._id, "accept")}
+                aria-label={vi.chat.accept}
+              />
+            </Tooltip>,
+            <Tooltip key="reject" title={vi.chat.reject}>
+              <Button
+                size="small"
+                type="text"
+                danger
+                icon={<FiX />}
+                onClick={() => handleRequest(request._id, "reject")}
+                aria-label={vi.chat.reject}
+              />
+            </Tooltip>,
+          ]}
+        >
+          <List.Item.Meta
+            avatar={<Avatar>{request.fromUserId.username.charAt(0).toUpperCase()}</Avatar>}
+            title={request.fromUserId.username}
+          />
+        </List.Item>
+      )}
+    />
+  );
+
+  function toggleRailPanel(panel: "search" | "outgoing" | "incoming") {
+    setSettingsDrawerOpen(false);
+    if (isNarrowLayout) {
+      setMobileLeftOpen(false);
+    }
+    setRailPanel((cur) => (cur === panel ? null : panel));
+  }
+
+  function toggleSettingsFromRail() {
+    setRailPanel(null);
+    if (isNarrowLayout) {
+      setMobileLeftOpen(false);
+    }
+    setSettingsDrawerOpen((s) => !s);
+  }
+
+  function toggleMobileSidebar() {
+    setRailPanel(null);
+    setSettingsDrawerOpen(false);
+    setMobileLeftOpen((open) => !open);
+  }
+
+  return (
+    <Flex
+      className={`chat-layout${!isNarrowLayout ? " chat-layout--with-rail" : ""}`}
+      vertical={isNarrowLayout}
+      gap={isNarrowLayout ? 12 : 16}
+    >
       {!isNarrowLayout ? (
-        <Card className="chat-sidebar" title={sidebarCardTitle} extra={sidebarCardExtra}>
+        <aside className="chat-rail" aria-label={vi.chat.railNav}>
+          <div className="chat-rail-stack chat-rail-stack--top">
+            <Tooltip title={vi.chat.railChat}>
+              <span
+                className="chat-rail-btn chat-rail-btn--active"
+                aria-label={vi.chat.railChat}
+              >
+                <FiMessageCircle aria-hidden />
+              </span>
+            </Tooltip>
+            <Tooltip title={vi.chat.railOpenSearch}>
+              <button
+                type="button"
+                className={`chat-rail-btn${railPanel === "search" ? " chat-rail-btn--active" : ""}`}
+                onClick={() => toggleRailPanel("search")}
+                aria-label={vi.chat.railOpenSearch}
+                aria-pressed={railPanel === "search"}
+              >
+                <FiSearch />
+              </button>
+            </Tooltip>
+            <Tooltip title={vi.chat.railOpenOutgoing}>
+              <Badge count={outgoingRequests.length} size="small" offset={[-2, 2]}>
+                <button
+                  type="button"
+                  className={`chat-rail-btn${railPanel === "outgoing" ? " chat-rail-btn--active" : ""}`}
+                  onClick={() => toggleRailPanel("outgoing")}
+                  aria-label={vi.chat.railOpenOutgoing}
+                  aria-pressed={railPanel === "outgoing"}
+                >
+                  <FiClock />
+                </button>
+              </Badge>
+            </Tooltip>
+            <Tooltip title={vi.chat.railOpenIncoming}>
+              <Badge count={incomingRequests.length} size="small" offset={[-2, 2]}>
+                <button
+                  type="button"
+                  className={`chat-rail-btn${railPanel === "incoming" ? " chat-rail-btn--active" : ""}`}
+                  onClick={() => toggleRailPanel("incoming")}
+                  aria-label={vi.chat.railOpenIncoming}
+                  aria-pressed={railPanel === "incoming"}
+                >
+                  <FiInbox />
+                </button>
+              </Badge>
+            </Tooltip>
+          </div>
+          <div className="chat-rail-stack chat-rail-stack--bottom">
+            <Tooltip title={settingsDrawerOpen ? vi.chat.settingsClose : vi.chat.settingsOpen}>
+              <button
+                type="button"
+                className={`chat-rail-btn${settingsDrawerOpen ? " chat-rail-btn--active" : ""}`}
+                onClick={toggleSettingsFromRail}
+                aria-label={
+                  settingsDrawerOpen ? vi.chat.settingsClose : vi.chat.settingsOpen
+                }
+                aria-pressed={settingsDrawerOpen}
+              >
+                <FiSettings />
+              </button>
+            </Tooltip>
+            <Tooltip title={vi.chat.logout}>
+              <button
+                type="button"
+                className="chat-rail-btn chat-rail-btn--danger"
+                onClick={() => void handleLogout()}
+                aria-label={vi.chat.logout}
+              >
+                <FiLogOut />
+              </button>
+            </Tooltip>
+          </div>
+        </aside>
+      ) : null}
+
+      {!isNarrowLayout ? (
+        <Card className="chat-sidebar" title={sidebarCardTitle}>
           {sidebarBody}
         </Card>
       ) : null}
@@ -913,11 +1144,10 @@ export default function ChatPage() {
         <Drawer
           className="chat-sidebar-drawer"
           title={sidebarCardTitle}
-          extra={sidebarCardExtra}
           placement="left"
           width="min(100vw - 16px, 360px)"
-          open={sidebarDrawerOpen}
-          onClose={() => setSidebarDrawerOpen(false)}
+          open={mobileLeftOpen}
+          onClose={() => setMobileLeftOpen(false)}
           styles={{ body: { padding: 12 } }}
         >
           <div className="chat-sidebar-drawer-inner">{sidebarBody}</div>
@@ -925,138 +1155,128 @@ export default function ChatPage() {
       ) : null}
 
       <Drawer
-        title="Menu mo rong"
+        title={vi.chat.searchUsersTitle}
         placement="left"
         width="min(100vw - 16px, 360px)"
-        open={isExtraMenuOpen}
-        onClose={() => setIsExtraMenuOpen(false)}
+        open={railPanel === "search"}
+        onClose={() => setRailPanel(null)}
+        className="chat-rail-drawer"
       >
-        <Space direction="vertical" style={{ width: "100%" }} size={12}>
-          <Text strong>Cài đặt</Text>
-          <Flex justify="space-between" align="center" wrap="wrap" gap={8}>
-            <Text>Giao diện tối</Text>
-            <Switch
-              checked={theme === "dark"}
-              onChange={(checked) => setTheme(checked ? "dark" : "light")}
-            />
-          </Flex>
-          <Flex justify="space-between" align="center" wrap="wrap" gap={8}>
-            <Text>Thông báo desktop (tab ẩn)</Text>
-            <Switch
-              checked={desktopNotify}
-              onChange={async (checked) => {
-                if (checked) {
-                  const p = await requestNotificationPermission();
-                  if (p !== "granted") {
-                    message.warning("Trinh duyet tu choi hoac chua cap quyen thong bao");
-                    return;
-                  }
-                }
-                setDesktopNotify(checked);
-              }}
-            />
-          </Flex>
-          <Flex justify="space-between" align="center" wrap="wrap" gap={8}>
-            <Text>Âm báo tin mới</Text>
-            <Switch checked={soundNotify} onChange={setSoundNotify} />
-          </Flex>
-          <Text type="secondary">Ngôn ngữ: Tiếng Việt (chuẩn hoá dần trong app)</Text>
-
-          <Divider style={{ margin: "8px 0" }} />
-          <Text strong>Tim user</Text>
-          <Space.Compact style={{ width: "100%" }}>
-            <Input
-              placeholder="Nhap username hoac email"
-              value={searchText}
-              onChange={(event) => setSearchText(event.target.value)}
-              onPressEnter={searchUsers}
-            />
-            <Button onClick={searchUsers}>Tim</Button>
-          </Space.Compact>
-          <List
-            size="small"
-            dataSource={visibleSearchResults}
-            locale={{ emptyText: "Khong co ket qua" }}
-            renderItem={(item) => (
-              <List.Item
-                actions={[
-                  <Tooltip key="add" title="Ket ban">
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<FiUserPlus />}
-                      onClick={() => sendFriendRequest(item._id)}
-                      aria-label="Ket ban"
-                    />
-                  </Tooltip>,
-                ]}
-              >
-                <List.Item.Meta
-                  avatar={<Avatar>{item.username.charAt(0).toUpperCase()}</Avatar>}
-                  title={item.username}
-                />
-              </List.Item>
-            )}
-          />
-
-          <Divider style={{ margin: "4px 0" }} />
-          <Text strong>Danh sach cho ({outgoingRequests.length})</Text>
-          <List
-            size="small"
-            dataSource={outgoingRequests}
-            locale={{ emptyText: "Khong co loi moi dang cho" }}
-            renderItem={(request) => (
-              <List.Item>
-                <List.Item.Meta
-                  avatar={<Avatar>{request.toUserId.username.charAt(0).toUpperCase()}</Avatar>}
-                  title={request.toUserId.username}
-                  description="Dang cho chap nhan"
-                />
-              </List.Item>
-            )}
-          />
-
-          <Divider style={{ margin: "4px 0" }} />
-          <Text strong>Loi moi den ({incomingRequests.length})</Text>
-          <List
-            size="small"
-            dataSource={incomingRequests}
-            locale={{ emptyText: "Khong co loi moi" }}
-            renderItem={(request) => (
-              <List.Item
-                actions={[
-                  <Tooltip key="accept" title="Chap nhan">
-                    <Button
-                      size="small"
-                      type="text"
-                      icon={<FiCheck />}
-                      onClick={() => handleRequest(request._id, "accept")}
-                      aria-label="Chap nhan"
-                    />
-                  </Tooltip>,
-                  <Tooltip key="reject" title="Tu choi">
-                    <Button
-                      size="small"
-                      type="text"
-                      danger
-                      icon={<FiX />}
-                      onClick={() => handleRequest(request._id, "reject")}
-                      aria-label="Tu choi"
-                    />
-                  </Tooltip>,
-                ]}
-              >
-                <List.Item.Meta
-                  avatar={
-                    <Avatar>{request.fromUserId.username.charAt(0).toUpperCase()}</Avatar>
-                  }
-                  title={request.fromUserId.username}
-                />
-              </List.Item>
-            )}
-          />
-        </Space>
+        {searchPanelContent}
       </Drawer>
+      <Drawer
+        title={vi.chat.outgoing(outgoingRequests.length)}
+        placement="left"
+        width="min(100vw - 16px, 360px)"
+        open={railPanel === "outgoing"}
+        onClose={() => setRailPanel(null)}
+        className="chat-rail-drawer"
+      >
+        {outgoingPanelContent}
+      </Drawer>
+      <Drawer
+        title={vi.chat.incoming(incomingRequests.length)}
+        placement="left"
+        width="min(100vw - 16px, 360px)"
+        open={railPanel === "incoming"}
+        onClose={() => setRailPanel(null)}
+        className="chat-rail-drawer"
+      >
+        {incomingPanelContent}
+      </Drawer>
+
+      <Drawer
+        className="chat-settings-drawer"
+        title={vi.chat.settings}
+        placement="right"
+        width="min(100vw - 16px, 360px)"
+        open={settingsDrawerOpen}
+        onClose={() => setSettingsDrawerOpen(false)}
+      >
+        {settingsDrawerContent}
+      </Drawer>
+
+      {isNarrowLayout ? (
+        <nav className="chat-mobile-top-nav" aria-label={vi.chat.mobileQuickMenu}>
+          <div className="chat-mobile-top-nav-inner">
+            <div className="chat-mobile-top-nav-group">
+              <Tooltip title={mobileLeftOpen ? vi.chat.extraClose : vi.chat.sidebarMenu}>
+                <button
+                  type="button"
+                  className={`chat-mobile-top-nav-btn${mobileLeftOpen ? " chat-mobile-top-nav-btn--active" : ""}`}
+                  onClick={toggleMobileSidebar}
+                  aria-label={mobileLeftOpen ? vi.chat.extraClose : vi.chat.sidebarMenu}
+                  aria-pressed={mobileLeftOpen}
+                >
+                  <FiMenu aria-hidden />
+                </button>
+              </Tooltip>
+              <Tooltip title={vi.chat.railOpenSearch}>
+                <button
+                  type="button"
+                  className={`chat-mobile-top-nav-btn${railPanel === "search" ? " chat-mobile-top-nav-btn--active" : ""}`}
+                  onClick={() => toggleRailPanel("search")}
+                  aria-label={vi.chat.railOpenSearch}
+                  aria-pressed={railPanel === "search"}
+                >
+                  <FiSearch aria-hidden />
+                </button>
+              </Tooltip>
+              <Tooltip title={vi.chat.railOpenOutgoing}>
+                <Badge count={outgoingRequests.length} size="small" offset={[-2, 2]}>
+                  <button
+                    type="button"
+                    className={`chat-mobile-top-nav-btn${railPanel === "outgoing" ? " chat-mobile-top-nav-btn--active" : ""}`}
+                    onClick={() => toggleRailPanel("outgoing")}
+                    aria-label={vi.chat.railOpenOutgoing}
+                    aria-pressed={railPanel === "outgoing"}
+                  >
+                    <FiClock aria-hidden />
+                  </button>
+                </Badge>
+              </Tooltip>
+              <Tooltip title={vi.chat.railOpenIncoming}>
+                <Badge count={incomingRequests.length} size="small" offset={[-2, 2]}>
+                  <button
+                    type="button"
+                    className={`chat-mobile-top-nav-btn${railPanel === "incoming" ? " chat-mobile-top-nav-btn--active" : ""}`}
+                    onClick={() => toggleRailPanel("incoming")}
+                    aria-label={vi.chat.railOpenIncoming}
+                    aria-pressed={railPanel === "incoming"}
+                  >
+                    <FiInbox aria-hidden />
+                  </button>
+                </Badge>
+              </Tooltip>
+            </div>
+            <div className="chat-mobile-top-nav-group chat-mobile-top-nav-group--end">
+              <Tooltip title={settingsDrawerOpen ? vi.chat.settingsClose : vi.chat.settingsOpen}>
+                <button
+                  type="button"
+                  className={`chat-mobile-top-nav-btn${settingsDrawerOpen ? " chat-mobile-top-nav-btn--active" : ""}`}
+                  onClick={toggleSettingsFromRail}
+                  aria-label={
+                    settingsDrawerOpen ? vi.chat.settingsClose : vi.chat.settingsOpen
+                  }
+                  aria-pressed={settingsDrawerOpen}
+                >
+                  <FiSettings aria-hidden />
+                </button>
+              </Tooltip>
+              <Tooltip title={vi.chat.logout}>
+                <button
+                  type="button"
+                  className="chat-mobile-top-nav-btn chat-mobile-top-nav-btn--danger"
+                  onClick={() => void handleLogout()}
+                  aria-label={vi.chat.logout}
+                >
+                  <FiLogOut aria-hidden />
+                </button>
+              </Tooltip>
+            </div>
+          </div>
+        </nav>
+      ) : null}
 
       <Card className="chat-main">
         <input
@@ -1086,15 +1306,6 @@ export default function ChatPage() {
         <Flex vertical gap={16} className="chat-main-stack">
           <Flex justify="space-between" align="center" gap={8} wrap="wrap" flex="none">
             <Flex align="center" gap={8} style={{ flex: "1 1 160px", minWidth: 0 }}>
-              {isNarrowLayout ? (
-                <Button
-                  type="text"
-                  className="chat-mobile-sidebar-trigger"
-                  icon={<FiMenu />}
-                  onClick={() => setSidebarDrawerOpen(true)}
-                  aria-label="Mo menu sidebar"
-                />
-              ) : null}
               <Flex vertical gap={0} style={{ flex: 1, minWidth: 0 }}>
                 <Title level={4} style={{ margin: 0 }} ellipsis>
                   {currentRoomName}
@@ -1107,30 +1318,30 @@ export default function ChatPage() {
               </Flex>
             </Flex>
             <Space size={8} wrap className="chat-header-actions">
-              <Tooltip title="Goi dien">
+              <Tooltip title={vi.chat.callAudio}>
                 <Button
                   className="chat-header-icon-btn"
                   shape="circle"
                   icon={<FiPhone />}
-                  aria-label="Goi dien"
+                  aria-label={vi.chat.callAudio}
                 />
               </Tooltip>
-              <Tooltip title="Goi video">
+              <Tooltip title={vi.chat.callVideo}>
                 <Button
                   className="chat-header-icon-btn"
                   shape="circle"
                   icon={<FiCamera />}
-                  aria-label="Goi video"
+                  aria-label={vi.chat.callVideo}
                 />
               </Tooltip>
-              <Tooltip title="Thong tin room">
+              <Tooltip title={vi.chat.roomInfo}>
                 <Button
                   className="chat-header-icon-btn"
                   shape="circle"
                   icon={<FiInfo />}
                   onClick={() => setIsRoomInfoOpen(true)}
                   disabled={!selectedRoom}
-                  aria-label="Thong tin room"
+                  aria-label={vi.chat.roomInfo}
                 />
               </Tooltip>
             </Space>
@@ -1169,8 +1380,7 @@ export default function ChatPage() {
 
             <Flex vertical gap={8} className="chat-compose-outer" flex="none">
               <ChatComposeRow
-                messageInput={messageInput}
-                onMessageInputChange={setMessageInput}
+                ref={composeRef}
                 onSubmit={() => void submitComposer()}
                 selectedRoomId={selectedRoomId}
                 uploadingMedia={uploadingMedia}
@@ -1182,11 +1392,7 @@ export default function ChatPage() {
                 onPickImage={() => imageInputRef.current?.click()}
                 onPickVideo={() => videoInputRef.current?.click()}
                 onPickAudio={() => audioInputRef.current?.click()}
-                sendDisabled={
-                  !selectedRoomId ||
-                  uploadingMedia ||
-                  (!pendingImage && !messageInput.trim())
-                }
+                parentSendBlocked={!selectedRoomId || uploadingMedia}
               />
             </Flex>
           </Suspense>
@@ -1194,7 +1400,7 @@ export default function ChatPage() {
       </Card>
 
       <Modal
-        title="Xem truoc anh"
+        title={vi.chat.previewTitle}
         open={pendingImageModalOpen}
         footer={null}
         onCancel={() => setPendingImageModalOpen(false)}
@@ -1212,7 +1418,7 @@ export default function ChatPage() {
       </Modal>
 
       <Drawer
-        title={selectedRoom?.type === "direct" ? "Thong tin nguoi dung" : "Thanh vien trong nhom"}
+        title={selectedRoom?.type === "direct" ? vi.chat.roomInfoDirect : vi.chat.roomInfoGroup}
         placement="right"
         width="min(100vw - 16px, 340px)"
         open={isRoomInfoOpen}
@@ -1222,7 +1428,7 @@ export default function ChatPage() {
         }}
       >
         {!selectedRoom ? (
-          <Text type="secondary">Chua chon room de xem thong tin</Text>
+          <Text type="secondary">{vi.chat.noRoomInfo}</Text>
         ) : selectedRoom.type === "direct" ? (
           <Space direction="vertical" style={{ width: "100%" }} size={12}>
             <Flex align="center" gap={12}>
@@ -1230,31 +1436,33 @@ export default function ChatPage() {
                 {(directCounterpart?.username || "?").charAt(0).toUpperCase()}
               </AvatarWithStatus>
               <Space direction="vertical" size={2}>
-                <Text strong>{directCounterpart?.username || "Khong co ten"}</Text>
-                <Text type="secondary">{directCounterpart?.email || "Khong co email"}</Text>
+                <Text strong>{directCounterpart?.username || vi.chat.noName}</Text>
+                <Text type="secondary">{directCounterpart?.email || vi.chat.noEmail}</Text>
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   {directHeaderPresence}
                 </Text>
               </Space>
             </Flex>
             <Divider style={{ margin: "6px 0" }} />
-            <Text type="secondary">Loai chat: 1-1</Text>
-            <Text type="secondary">Room ID: {selectedRoom._id}</Text>
+            <Text type="secondary">{vi.chat.chatTypeDirect}</Text>
+            <Text type="secondary">
+              {vi.chat.roomId}: {selectedRoom._id}
+            </Text>
           </Space>
         ) : (
           <Space direction="vertical" style={{ width: "100%" }} size={12}>
             <Flex justify="space-between" align="center" wrap="wrap" gap={8}>
-              <Text strong>Tong so thanh vien: {groupMembers.length}</Text>
+              <Text strong>{vi.chat.memberCount(groupMembers.length)}</Text>
               {canAddGroupMembers ? (
                 <Button type="primary" size="small" onClick={() => setIsAddMemberOpen(true)}>
-                  Them thanh vien
+                  {vi.chat.addMemberBtn}
                 </Button>
               ) : null}
             </Flex>
             <List
               size="small"
               dataSource={groupMembers}
-              locale={{ emptyText: "Khong co thanh vien" }}
+              locale={{ emptyText: vi.chat.noMembers }}
               renderItem={(member) => (
                 <List.Item>
                   <List.Item.Meta
@@ -1274,30 +1482,30 @@ export default function ChatPage() {
       </Drawer>
 
       <Drawer
-        title="Them thanh vien vao nhom"
+        title={vi.chat.addMemberTitle}
         placement="right"
         width="min(100vw - 16px, 340px)"
         open={isAddMemberOpen}
         onClose={() => setIsAddMemberOpen(false)}
       >
         {selectedRoom?.type !== "group" ? (
-          <Text type="secondary">Chi ho tro them thanh vien cho chat nhom</Text>
+          <Text type="secondary">{vi.chat.addMemberOnlyGroup}</Text>
         ) : (
           <List
             size="small"
             dataSource={addableFriendsForGroup}
-            locale={{ emptyText: "Tat ca ban be da co trong nhom" }}
+            locale={{ emptyText: vi.chat.allFriendsInGroup }}
             renderItem={(friend) => (
               <List.Item
                 actions={[
-                  <Tooltip key="add-to-group" title="Them vao nhom">
+                  <Tooltip key="add-to-group" title={vi.chat.addToGroup}>
                     <Button
                       type="text"
                       size="small"
                       icon={<FiUserPlus />}
                       loading={addingMemberId === friend._id}
                       onClick={() => addMemberToGroup(friend._id)}
-                      aria-label="Them vao nhom"
+                      aria-label={vi.chat.addToGroup}
                     />
                   </Tooltip>,
                 ]}

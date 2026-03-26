@@ -3,7 +3,7 @@ import type { ReactElement } from "react";
 import { Spin } from "antd";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
-import { ChatSettingsProvider } from "./context/ChatSettingsContext";
+import { vi } from "./strings/vi";
 
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 const RegisterPage = lazy(() => import("./pages/RegisterPage"));
@@ -11,14 +11,7 @@ const ChatPage = lazy(() => import("./pages/ChatPage"));
 
 function RouteFallback() {
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        minHeight: "50vh",
-      }}
-    >
+    <div className="route-fallback">
       <Spin size="large" />
     </div>
   );
@@ -43,7 +36,7 @@ export default function App() {
   }, [loadProfile]);
 
   if (checkingAuth) {
-    return <Spin fullscreen tip="Dang tai..." />;
+    return <Spin fullscreen tip={vi.loading} />;
   }
 
   return (
@@ -61,9 +54,7 @@ export default function App() {
           path="/chat"
           element={
             <ProtectedRoute>
-              <ChatSettingsProvider>
-                <ChatPage />
-              </ChatSettingsProvider>
+              <ChatPage />
             </ProtectedRoute>
           }
         />

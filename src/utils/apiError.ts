@@ -1,4 +1,4 @@
-export function getApiErrorMessage(error: unknown, fallback = "Da co loi xay ra"): string {
+export function getApiErrorMessage(error: unknown, fallback = "Đã có lỗi xảy ra"): string {
   const data = (
     error as {
       response?: { data?: { message?: string; error?: { message?: string } } };

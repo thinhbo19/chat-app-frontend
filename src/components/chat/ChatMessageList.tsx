@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { Avatar, Dropdown, Image, Spin, Typography } from "antd";
 import type { MenuProps } from "antd";
 import { ChatAudioMessage } from "../ChatAudioMessage";
+import { vi } from "../../strings/vi";
 import type { ChatMessage, Room, RoomReadStateEntry } from "../../types";
 
 const { Text } = Typography;
@@ -40,9 +41,9 @@ function readReceiptHint(
     if (lr && lr >= msg.id) readCount += 1;
   }
   if (readCount === 0) return null;
-  if (room.type === "direct") return "Đã xem";
-  if (readCount === others.length) return `Đã xem (${readCount})`;
-  return `Đã xem ${readCount}/${others.length}`;
+  if (room.type === "direct") return vi.messageList.readDirect;
+  if (readCount === others.length) return vi.messageList.readGroupAll(readCount);
+  return vi.messageList.readGroupPartial(readCount, others.length);
 }
 
 type ChatMessageListProps = {
@@ -94,7 +95,7 @@ export function ChatMessageList({
   const recallItems = (messageId: string): MenuProps["items"] => [
     {
       key: "recall",
-      label: "Thu hồi tin nhắn",
+      label: vi.messageList.recall,
       danger: true,
       onClick: () => onRecall(messageId),
     },
@@ -109,7 +110,7 @@ export function ChatMessageList({
       ) : null}
       {messages.length === 0 ? (
         <div className="empty-messages">
-          <Text type="secondary">Chua co tin nhan nao</Text>
+          <Text type="secondary">{vi.messageList.empty}</Text>
         </div>
       ) : (
         messages.map((msg) => {
@@ -162,7 +163,7 @@ export function ChatMessageList({
                   src={mediaSrc}
                   alt=""
                   className="message-bare-img"
-                  preview={{ mask: "Phong to" }}
+                  preview={{ mask: vi.messageList.zoomImage }}
                 />
               ) : null}
               {contentType === "video" && mediaSrc ? (
