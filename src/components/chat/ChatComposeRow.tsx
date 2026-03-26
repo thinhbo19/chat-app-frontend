@@ -131,7 +131,6 @@ export function ChatComposeRow({
           disabled={!selectedRoomId}
           autoSize={{ minRows: 1, maxRows: 3 }}
         />
-        <Tooltip title="Gui tin nhan">
           <Button
             type="primary"
             shape="circle"
@@ -141,7 +140,6 @@ export function ChatComposeRow({
             aria-label="Gui tin nhan"
             className="chat-send-btn"
           />
-        </Tooltip>
       </Flex>
     </>
   );

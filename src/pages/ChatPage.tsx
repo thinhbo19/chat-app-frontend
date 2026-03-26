@@ -28,6 +28,7 @@ import {
   Tooltip,
   Typography,
   message,
+  notification,
 } from "antd";
 import { useNavigate } from "react-router-dom";
 import { api, getAccessToken } from "../services/api";
@@ -46,7 +47,7 @@ const ChatComposeRow = lazy(() =>
 import { useChatSettings } from "../context/ChatSettingsContext";
 import { getApiErrorMessage } from "../utils/apiError";
 import { formatChatHeaderPresence } from "../utils/formatPresence";
-import { playMessageBeep } from "../utils/messageSound";
+import { playMessageBeep, unlockMessageAudio } from "../utils/messageSound";
 import type {
   ChatMessage,
   ChatMessageContentType,
@@ -137,6 +138,18 @@ export default function ChatPage() {
   }, [soundNotify, desktopNotify]);
 
   useEffect(() => {
+    const onGesture = () => {
+      unlockMessageAudio();
+    };
+    window.addEventListener("pointerdown", onGesture, { passive: true });
+    window.addEventListener("keydown", onGesture);
+    return () => {
+      window.removeEventListener("pointerdown", onGesture);
+      window.removeEventListener("keydown", onGesture);
+    };
+  }, []);
+
+  useEffect(() => {
     const mq = window.matchMedia("(max-width: 992px)");
     const sync = () => setIsNarrowLayout(mq.matches);
     sync();
@@ -160,7 +173,10 @@ export default function ChatPage() {
     const nextSocket = io(API_BASE_URL, {
       auth: { token },
       reconnection: true,
-      timeout: 5000,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 15000,
+      timeout: 20000,
       autoConnect: false,
       transports: ["websocket", "polling"],
     });
@@ -253,7 +269,9 @@ export default function ChatPage() {
   useEffect(() => {
     if (!socket) return;
 
-    const handleConnect = () => null;
+    const handleConnect = () => {
+      void loadRooms();
+    };
     const handleConnectError = (error: Error) => {
       const latestToken = getAccessToken();
       if (latestToken) {
@@ -272,36 +290,47 @@ export default function ChatPage() {
 
     const handleNewMessage = (incoming: ChatMessage) => {
       const roomId = selectedRoomIdRef.current;
-      if (incoming.roomId === roomId) {
+      const incomingRoomId = String(incoming.roomId);
+      if (incomingRoomId === roomId) {
         setMessages((prev) => {
           if (prev.some((p) => p.id === incoming.id)) return prev;
           return [...prev, incoming];
         });
       }
-      const myId = user?._id;
-      const fromOther = Boolean(myId && incoming.sender.id !== myId);
-      if (fromOther && incoming.roomId !== roomId) {
+      const myId = user?._id ? String(user._id) : "";
+      const senderId = String(incoming.sender.id || "");
+      const fromOther = Boolean(myId && senderId && senderId !== myId);
+      if (fromOther && incomingRoomId !== roomId) {
         setUnreadByRoomId((prev) => ({
           ...prev,
-          [incoming.roomId]: (prev[incoming.roomId] || 0) + 1,
+          [incomingRoomId]: (prev[incomingRoomId] || 0) + 1,
         }));
       }
       if (!fromOther) return;
       const { soundNotify: snd, desktopNotify: dsk } = settingsRef.current;
-      const isCurrentRoom = incoming.roomId === roomId;
+      const isCurrentRoom = incomingRoomId === roomId;
+      if (!isCurrentRoom) {
+        if (document.visibilityState === "visible") {
+          notification.info({
+            key: `incoming-${incomingRoomId}`,
+            message: incoming.sender.username,
+            description: previewIncoming(incoming),
+            placement: "topRight",
+            duration: 4.5,
+          });
+        } else if (
+          dsk &&
+          typeof Notification !== "undefined" &&
+          Notification.permission === "granted"
+        ) {
+          new Notification(incoming.sender.username, {
+            body: previewIncoming(incoming),
+            tag: incoming.id,
+          });
+        }
+      }
       if (snd && (!isCurrentRoom || document.visibilityState === "hidden")) {
         playMessageBeep();
-      }
-      if (
-        dsk &&
-        document.visibilityState === "hidden" &&
-        typeof Notification !== "undefined" &&
-        Notification.permission === "granted"
-      ) {
-        new Notification(incoming.sender.username, {
-          body: previewIncoming(incoming),
-          tag: incoming.id,
-        });
       }
     };
 
@@ -440,6 +469,23 @@ export default function ChatPage() {
 
     return () => window.clearInterval(interval);
   }, [loadFriends, loadIncomingRequests, loadOutgoingRequests]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      loadRooms().catch(() => null);
+    }, 25_000);
+    return () => window.clearInterval(interval);
+  }, [loadRooms]);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible") {
+        loadRooms().catch(() => null);
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [loadRooms]);
 
   useEffect(() => {
     if (!selectedRoomId) {
@@ -848,7 +894,7 @@ export default function ChatPage() {
   );
 
   return (
-    <Flex className="chat-layout" gap={16}>
+    <Flex className="chat-layout" vertical={isNarrowLayout} gap={isNarrowLayout ? 12 : 16}>
       <Button
         className="extra-menu-trigger"
         shape="circle"
@@ -869,7 +915,7 @@ export default function ChatPage() {
           title={sidebarCardTitle}
           extra={sidebarCardExtra}
           placement="left"
-          width="min(360px, 100vw)"
+          width="min(100vw - 16px, 360px)"
           open={sidebarDrawerOpen}
           onClose={() => setSidebarDrawerOpen(false)}
           styles={{ body: { padding: 12 } }}
@@ -881,7 +927,7 @@ export default function ChatPage() {
       <Drawer
         title="Menu mo rong"
         placement="left"
-        width={360}
+        width="min(100vw - 16px, 360px)"
         open={isExtraMenuOpen}
         onClose={() => setIsExtraMenuOpen(false)}
       >
@@ -1038,8 +1084,8 @@ export default function ChatPage() {
           onChange={onVideoOrAudioFileSelected}
         />
         <Flex vertical gap={16} className="chat-main-stack">
-          <Flex justify="space-between" align="center" gap={8} wrap="nowrap" flex="none">
-            <Flex align="center" gap={8} style={{ flex: 1, minWidth: 0 }}>
+          <Flex justify="space-between" align="center" gap={8} wrap="wrap" flex="none">
+            <Flex align="center" gap={8} style={{ flex: "1 1 160px", minWidth: 0 }}>
               {isNarrowLayout ? (
                 <Button
                   type="text"
@@ -1060,7 +1106,7 @@ export default function ChatPage() {
                 ) : null}
               </Flex>
             </Flex>
-            <Space size={8}>
+            <Space size={8} wrap className="chat-header-actions">
               <Tooltip title="Goi dien">
                 <Button
                   className="chat-header-icon-btn"
@@ -1168,7 +1214,7 @@ export default function ChatPage() {
       <Drawer
         title={selectedRoom?.type === "direct" ? "Thong tin nguoi dung" : "Thanh vien trong nhom"}
         placement="right"
-        width={340}
+        width="min(100vw - 16px, 340px)"
         open={isRoomInfoOpen}
         onClose={() => {
           setIsRoomInfoOpen(false);
@@ -1230,7 +1276,7 @@ export default function ChatPage() {
       <Drawer
         title="Them thanh vien vao nhom"
         placement="right"
-        width={340}
+        width="min(100vw - 16px, 340px)"
         open={isAddMemberOpen}
         onClose={() => setIsAddMemberOpen(false)}
       >
