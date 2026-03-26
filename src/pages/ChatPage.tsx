@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, Socket } from "socket.io-client";
 import {
   FiCamera,
@@ -23,6 +23,7 @@ import {
   List,
   Modal,
   Space,
+  Spin,
   Switch,
   Tooltip,
   Typography,
@@ -32,9 +33,16 @@ import { useNavigate } from "react-router-dom";
 import { api, getAccessToken } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { AvatarWithStatus } from "../components/AvatarWithStatus";
-import { ChatComposeRow } from "../components/chat/ChatComposeRow";
-import { ChatMessageList } from "../components/chat/ChatMessageList";
-import { ChatSidebarBody } from "../components/chat/ChatSidebarBody";
+
+const ChatSidebarBody = lazy(() =>
+  import("../components/chat/ChatSidebarBody").then((m) => ({ default: m.ChatSidebarBody })),
+);
+const ChatMessageList = lazy(() =>
+  import("../components/chat/ChatMessageList").then((m) => ({ default: m.ChatMessageList })),
+);
+const ChatComposeRow = lazy(() =>
+  import("../components/chat/ChatComposeRow").then((m) => ({ default: m.ChatComposeRow })),
+);
 import { useChatSettings } from "../context/ChatSettingsContext";
 import { getApiErrorMessage } from "../utils/apiError";
 import { formatChatHeaderPresence } from "../utils/formatPresence";
@@ -800,26 +808,34 @@ export default function ChatPage() {
     selectedRoom?.type === "group" && myRoomRole != null && ["owner", "admin"].includes(myRoomRole);
 
   const sidebarBody = (
-    <ChatSidebarBody
-      roomName={roomName}
-      onRoomNameChange={setRoomName}
-      onCreateRoom={() => void createRoom()}
-      groupRoomsOnly={groupRoomsOnly}
-      selectedRoomId={selectedRoomId}
-      onSelectRoom={(roomId) => {
-        setSelectedRoomId(roomId);
-        if (isNarrowLayout) {
-          setSidebarDrawerOpen(false);
-        }
-      }}
-      myUserId={user?._id || ""}
-      getRoomDisplayName={getRoomDisplayName}
-      friends={friends}
-      onOpenDirectRoom={(id) => void openDirectRoom(id)}
-      onRemoveFriend={(id) => void removeFriend(id)}
-      unreadByRoomId={unreadByRoomId}
-      unreadByFriendId={unreadByFriendId}
-    />
+    <Suspense
+      fallback={
+        <div style={{ padding: 24, textAlign: "center" }}>
+          <Spin />
+        </div>
+      }
+    >
+      <ChatSidebarBody
+        roomName={roomName}
+        onRoomNameChange={setRoomName}
+        onCreateRoom={() => void createRoom()}
+        groupRoomsOnly={groupRoomsOnly}
+        selectedRoomId={selectedRoomId}
+        onSelectRoom={(roomId) => {
+          setSelectedRoomId(roomId);
+          if (isNarrowLayout) {
+            setSidebarDrawerOpen(false);
+          }
+        }}
+        myUserId={user?._id || ""}
+        getRoomDisplayName={getRoomDisplayName}
+        friends={friends}
+        onOpenDirectRoom={(id) => void openDirectRoom(id)}
+        onRemoveFriend={(id) => void removeFriend(id)}
+        unreadByRoomId={unreadByRoomId}
+        unreadByFriendId={unreadByFriendId}
+      />
+    </Suspense>
   );
 
   const sidebarCardTitle = `Xin chao, ${user?.username || ""}`;
@@ -1074,48 +1090,60 @@ export default function ChatPage() {
             </Space>
           </Flex>
 
-          <Flex
-            className="chat-messages-column"
-            style={{ flex: "1 1 0%", minHeight: 0, minWidth: 0, overflow: "hidden" }}
-            vertical
+          <Suspense
+            fallback={
+              <Flex
+                align="center"
+                justify="center"
+                style={{ flex: "1 1 0%", minHeight: 160 }}
+              >
+                <Spin size="large" />
+              </Flex>
+            }
           >
-            <ChatMessageList
-              messages={messages}
-              currentUserId={currentUserId}
-              selectedRoom={selectedRoom}
-              apiBaseUrl={API_BASE_URL}
-              hasMore={messagesHasMore}
-              loadingOlder={loadingOlder}
-              onLoadOlder={(beforeId) => void loadOlderMessages(beforeId)}
-              onRecall={(id) => void recallMessage(id)}
-              readStates={readStates}
-              listEndRef={endOfMessagesRef}
-              listScrollRef={messagesScrollRef}
-            />
-          </Flex>
+            <Flex
+              className="chat-messages-column"
+              style={{ flex: "1 1 0%", minHeight: 0, minWidth: 0, overflow: "hidden" }}
+              vertical
+            >
+              <ChatMessageList
+                messages={messages}
+                currentUserId={currentUserId}
+                selectedRoom={selectedRoom}
+                apiBaseUrl={API_BASE_URL}
+                hasMore={messagesHasMore}
+                loadingOlder={loadingOlder}
+                onLoadOlder={(beforeId) => void loadOlderMessages(beforeId)}
+                onRecall={(id) => void recallMessage(id)}
+                readStates={readStates}
+                listEndRef={endOfMessagesRef}
+                listScrollRef={messagesScrollRef}
+              />
+            </Flex>
 
-          <Flex vertical gap={8} className="chat-compose-outer" flex="none">
-            <ChatComposeRow
-              messageInput={messageInput}
-              onMessageInputChange={setMessageInput}
-              onSubmit={() => void submitComposer()}
-              selectedRoomId={selectedRoomId}
-              uploadingMedia={uploadingMedia}
-              emojiOpen={emojiOpen}
-              onEmojiOpenChange={setEmojiOpen}
-              pendingImage={pendingImage}
-              onClearPendingImage={clearPendingImage}
-              onOpenPendingModal={() => setPendingImageModalOpen(true)}
-              onPickImage={() => imageInputRef.current?.click()}
-              onPickVideo={() => videoInputRef.current?.click()}
-              onPickAudio={() => audioInputRef.current?.click()}
-              sendDisabled={
-                !selectedRoomId ||
-                uploadingMedia ||
-                (!pendingImage && !messageInput.trim())
-              }
-            />
-          </Flex>
+            <Flex vertical gap={8} className="chat-compose-outer" flex="none">
+              <ChatComposeRow
+                messageInput={messageInput}
+                onMessageInputChange={setMessageInput}
+                onSubmit={() => void submitComposer()}
+                selectedRoomId={selectedRoomId}
+                uploadingMedia={uploadingMedia}
+                emojiOpen={emojiOpen}
+                onEmojiOpenChange={setEmojiOpen}
+                pendingImage={pendingImage}
+                onClearPendingImage={clearPendingImage}
+                onOpenPendingModal={() => setPendingImageModalOpen(true)}
+                onPickImage={() => imageInputRef.current?.click()}
+                onPickVideo={() => videoInputRef.current?.click()}
+                onPickAudio={() => audioInputRef.current?.click()}
+                sendDisabled={
+                  !selectedRoomId ||
+                  uploadingMedia ||
+                  (!pendingImage && !messageInput.trim())
+                }
+              />
+            </Flex>
+          </Suspense>
         </Flex>
       </Card>
 
