@@ -118,7 +118,6 @@ export function ChatSidebarBody({
                     size="small"
                     icon={<FiUserMinus />}
                     onClick={(event) => event.stopPropagation()}
-                    aria-label={vi.sidebar.removeFriendAria}
                   />
                 </Popconfirm>,
               ]}

@@ -89,7 +89,6 @@ const ChatComposeRowInner = forwardRef<ChatComposeRowHandle, ChatComposeRowProps
                 type="button"
                 className="pending-image-remove"
                 onClick={onClearPendingImage}
-                aria-label={vi.compose.clearImage}
               >
                 <FiX size={14} />
               </button>
@@ -115,7 +114,7 @@ const ChatComposeRowInner = forwardRef<ChatComposeRowHandle, ChatComposeRowProps
                 </Suspense>
               }
             >
-              <Button type="default" className="chat-compose-tool-btn" aria-label={vi.compose.emoji}>
+              <Button type="default" className="chat-compose-tool-btn">
                 <span className="chat-emoji-trigger">🙂</span>
               </Button>
             </Popover>
@@ -127,7 +126,6 @@ const ChatComposeRowInner = forwardRef<ChatComposeRowHandle, ChatComposeRowProps
                 loading={uploadingMedia}
                 disabled={!selectedRoomId}
                 onClick={onPickImage}
-                aria-label={vi.compose.attachImage}
               />
             </Tooltip>
             <Tooltip title={vi.compose.sendVideo}>
@@ -138,7 +136,6 @@ const ChatComposeRowInner = forwardRef<ChatComposeRowHandle, ChatComposeRowProps
                 loading={uploadingMedia}
                 disabled={!selectedRoomId}
                 onClick={onPickVideo}
-                aria-label={vi.compose.attachVideo}
               />
             </Tooltip>
             <Tooltip title={vi.compose.sendAudio}>
@@ -149,7 +146,6 @@ const ChatComposeRowInner = forwardRef<ChatComposeRowHandle, ChatComposeRowProps
                 loading={uploadingMedia}
                 disabled={!selectedRoomId}
                 onClick={onPickAudio}
-                aria-label={vi.compose.attachAudio}
               />
             </Tooltip>
           </Space>
@@ -173,7 +169,6 @@ const ChatComposeRowInner = forwardRef<ChatComposeRowHandle, ChatComposeRowProps
             icon={<FiSend />}
             onClick={() => void onSubmit()}
             disabled={sendDisabled}
-            aria-label={vi.compose.send}
             className="chat-send-btn"
           />
         </Flex>

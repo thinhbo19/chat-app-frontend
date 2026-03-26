@@ -959,7 +959,6 @@ export default function ChatPage() {
                   size="small"
                   icon={<FiUserPlus />}
                   onClick={() => sendFriendRequest(item._id)}
-                  aria-label={vi.chat.addFriend}
                 />
               </Tooltip>,
             ]}
@@ -1005,7 +1004,6 @@ export default function ChatPage() {
                 type="text"
                 icon={<FiCheck />}
                 onClick={() => handleRequest(request._id, "accept")}
-                aria-label={vi.chat.accept}
               />
             </Tooltip>,
             <Tooltip key="reject" title={vi.chat.reject}>
@@ -1015,7 +1013,6 @@ export default function ChatPage() {
                 danger
                 icon={<FiX />}
                 onClick={() => handleRequest(request._id, "reject")}
-                aria-label={vi.chat.reject}
               />
             </Tooltip>,
           ]}
@@ -1058,13 +1055,10 @@ export default function ChatPage() {
       gap={isNarrowLayout ? 12 : 16}
     >
       {!isNarrowLayout ? (
-        <aside className="chat-rail" aria-label={vi.chat.railNav}>
+        <aside className="chat-rail">
           <div className="chat-rail-stack chat-rail-stack--top">
             <Tooltip title={vi.chat.railChat}>
-              <span
-                className="chat-rail-btn chat-rail-btn--active"
-                aria-label={vi.chat.railChat}
-              >
+              <span className="chat-rail-btn chat-rail-btn--active">
                 <FiMessageCircle aria-hidden />
               </span>
             </Tooltip>
@@ -1073,7 +1067,6 @@ export default function ChatPage() {
                 type="button"
                 className={`chat-rail-btn${railPanel === "search" ? " chat-rail-btn--active" : ""}`}
                 onClick={() => toggleRailPanel("search")}
-                aria-label={vi.chat.railOpenSearch}
                 aria-pressed={railPanel === "search"}
               >
                 <FiSearch />
@@ -1085,7 +1078,6 @@ export default function ChatPage() {
                   type="button"
                   className={`chat-rail-btn${railPanel === "outgoing" ? " chat-rail-btn--active" : ""}`}
                   onClick={() => toggleRailPanel("outgoing")}
-                  aria-label={vi.chat.railOpenOutgoing}
                   aria-pressed={railPanel === "outgoing"}
                 >
                   <FiClock />
@@ -1098,7 +1090,6 @@ export default function ChatPage() {
                   type="button"
                   className={`chat-rail-btn${railPanel === "incoming" ? " chat-rail-btn--active" : ""}`}
                   onClick={() => toggleRailPanel("incoming")}
-                  aria-label={vi.chat.railOpenIncoming}
                   aria-pressed={railPanel === "incoming"}
                 >
                   <FiInbox />
@@ -1112,9 +1103,6 @@ export default function ChatPage() {
                 type="button"
                 className={`chat-rail-btn${settingsDrawerOpen ? " chat-rail-btn--active" : ""}`}
                 onClick={toggleSettingsFromRail}
-                aria-label={
-                  settingsDrawerOpen ? vi.chat.settingsClose : vi.chat.settingsOpen
-                }
                 aria-pressed={settingsDrawerOpen}
               >
                 <FiSettings />
@@ -1125,7 +1113,6 @@ export default function ChatPage() {
                 type="button"
                 className="chat-rail-btn chat-rail-btn--danger"
                 onClick={() => void handleLogout()}
-                aria-label={vi.chat.logout}
               >
                 <FiLogOut />
               </button>
@@ -1197,7 +1184,7 @@ export default function ChatPage() {
       </Drawer>
 
       {isNarrowLayout ? (
-        <nav className="chat-mobile-top-nav" aria-label={vi.chat.mobileQuickMenu}>
+        <nav className="chat-mobile-top-nav">
           <div className="chat-mobile-top-nav-inner">
             <div className="chat-mobile-top-nav-group">
               <Tooltip title={mobileLeftOpen ? vi.chat.extraClose : vi.chat.sidebarMenu}>
@@ -1205,7 +1192,6 @@ export default function ChatPage() {
                   type="button"
                   className={`chat-mobile-top-nav-btn${mobileLeftOpen ? " chat-mobile-top-nav-btn--active" : ""}`}
                   onClick={toggleMobileSidebar}
-                  aria-label={mobileLeftOpen ? vi.chat.extraClose : vi.chat.sidebarMenu}
                   aria-pressed={mobileLeftOpen}
                 >
                   <FiMenu aria-hidden />
@@ -1216,7 +1202,6 @@ export default function ChatPage() {
                   type="button"
                   className={`chat-mobile-top-nav-btn${railPanel === "search" ? " chat-mobile-top-nav-btn--active" : ""}`}
                   onClick={() => toggleRailPanel("search")}
-                  aria-label={vi.chat.railOpenSearch}
                   aria-pressed={railPanel === "search"}
                 >
                   <FiSearch aria-hidden />
@@ -1228,7 +1213,6 @@ export default function ChatPage() {
                     type="button"
                     className={`chat-mobile-top-nav-btn${railPanel === "outgoing" ? " chat-mobile-top-nav-btn--active" : ""}`}
                     onClick={() => toggleRailPanel("outgoing")}
-                    aria-label={vi.chat.railOpenOutgoing}
                     aria-pressed={railPanel === "outgoing"}
                   >
                     <FiClock aria-hidden />
@@ -1241,7 +1225,6 @@ export default function ChatPage() {
                     type="button"
                     className={`chat-mobile-top-nav-btn${railPanel === "incoming" ? " chat-mobile-top-nav-btn--active" : ""}`}
                     onClick={() => toggleRailPanel("incoming")}
-                    aria-label={vi.chat.railOpenIncoming}
                     aria-pressed={railPanel === "incoming"}
                   >
                     <FiInbox aria-hidden />
@@ -1255,9 +1238,6 @@ export default function ChatPage() {
                   type="button"
                   className={`chat-mobile-top-nav-btn${settingsDrawerOpen ? " chat-mobile-top-nav-btn--active" : ""}`}
                   onClick={toggleSettingsFromRail}
-                  aria-label={
-                    settingsDrawerOpen ? vi.chat.settingsClose : vi.chat.settingsOpen
-                  }
                   aria-pressed={settingsDrawerOpen}
                 >
                   <FiSettings aria-hidden />
@@ -1268,7 +1248,6 @@ export default function ChatPage() {
                   type="button"
                   className="chat-mobile-top-nav-btn chat-mobile-top-nav-btn--danger"
                   onClick={() => void handleLogout()}
-                  aria-label={vi.chat.logout}
                 >
                   <FiLogOut aria-hidden />
                 </button>
@@ -1323,7 +1302,6 @@ export default function ChatPage() {
                   className="chat-header-icon-btn"
                   shape="circle"
                   icon={<FiPhone />}
-                  aria-label={vi.chat.callAudio}
                 />
               </Tooltip>
               <Tooltip title={vi.chat.callVideo}>
@@ -1331,7 +1309,6 @@ export default function ChatPage() {
                   className="chat-header-icon-btn"
                   shape="circle"
                   icon={<FiCamera />}
-                  aria-label={vi.chat.callVideo}
                 />
               </Tooltip>
               <Tooltip title={vi.chat.roomInfo}>
@@ -1341,7 +1318,6 @@ export default function ChatPage() {
                   icon={<FiInfo />}
                   onClick={() => setIsRoomInfoOpen(true)}
                   disabled={!selectedRoom}
-                  aria-label={vi.chat.roomInfo}
                 />
               </Tooltip>
             </Space>
@@ -1505,7 +1481,6 @@ export default function ChatPage() {
                       icon={<FiUserPlus />}
                       loading={addingMemberId === friend._id}
                       onClick={() => addMemberToGroup(friend._id)}
-                      aria-label={vi.chat.addToGroup}
                     />
                   </Tooltip>,
                 ]}

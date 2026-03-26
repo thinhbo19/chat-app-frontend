@@ -63,7 +63,6 @@ export function ChatAudioMessage({ src, isMine }: Props) {
           type="button"
           className="audio-msg-play"
           onClick={toggle}
-          aria-label={playing ? "Tam dung" : "Phat"}
         >
           {playing ? <FiPause size={18} /> : <FiPlay size={18} style={{ marginLeft: 2 }} />}
         </button>
