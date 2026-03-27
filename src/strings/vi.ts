@@ -139,6 +139,11 @@ export const vi = {
       `Bạn chắc chắn muốn xóa ${username} khỏi danh sách bạn bè?`,
     delete: "Xóa",
     cancel: "Hủy",
+    friendMenuAria: "Tùy chọn bạn bè",
+    friendViewInfo: "Xem thông tin",
+    friendRemoveFriend: "Hủy kết bạn",
+    friendInfoTitle: "Thông tin bạn bè",
+    friendInfoPresence: "Trạng thái",
   },
   compose: {
     placeholder: "Nhập tin nhắn, emoji hoặc chú thích kèm file…",

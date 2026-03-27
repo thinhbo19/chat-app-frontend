@@ -8,6 +8,7 @@ export default {
     extend: {
       fontFamily: {
         sans: ['"Plus Jakarta Sans"', "Segoe UI", "system-ui", "sans-serif"],
+        display: ['"Outfit"', '"Plus Jakarta Sans"', "system-ui", "sans-serif"],
       },
       animation: {
         "auth-card-in": "auth-card-in 0.48s cubic-bezier(0.22, 1, 0.36, 1) both",

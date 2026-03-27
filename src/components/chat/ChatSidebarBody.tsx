@@ -1,6 +1,9 @@
-import { FiHash, FiUserMinus, FiUsers } from "react-icons/fi";
-import { Avatar, Badge, Button, Divider, Input, List, Popconfirm, Space, Typography } from "antd";
+import { useCallback, useState } from "react";
+import { FiHash, FiInfo, FiMoreVertical, FiUserMinus, FiUsers } from "react-icons/fi";
+import { Avatar, Badge, Button, Divider, Dropdown, Input, List, Modal, Space, Typography } from "antd";
+import type { MenuProps } from "antd";
 import { AvatarWithStatus } from "../AvatarWithStatus";
+import { FriendInfoModal } from "./FriendInfoModal";
 import { vi } from "../../strings/vi";
 import type { FriendUser, Room } from "../../types";
 import { resolveMediaUrl } from "../../utils/mediaUrl";
@@ -40,6 +43,64 @@ export function ChatSidebarBody({
   unreadByFriendId,
   apiBaseUrl,
 }: ChatSidebarBodyProps) {
+  const [friendInfoOpen, setFriendInfoOpen] = useState(false);
+  const [friendForInfo, setFriendForInfo] = useState<FriendUser | null>(null);
+
+  const openFriendInfo = useCallback((friend: FriendUser) => {
+    setFriendForInfo(friend);
+    setFriendInfoOpen(true);
+  }, []);
+
+  const closeFriendInfo = useCallback(() => {
+    setFriendInfoOpen(false);
+    setFriendForInfo(null);
+  }, []);
+
+  const confirmUnfriend = useCallback(
+    (friend: FriendUser) => {
+      Modal.confirm({
+        title: vi.sidebar.unfriendTitle,
+        content: vi.sidebar.unfriendDesc(friend.username),
+        okText: vi.sidebar.delete,
+        cancelText: vi.sidebar.cancel,
+        okButtonProps: { danger: true },
+        onOk: () => {
+          onRemoveFriend(friend._id);
+        },
+      });
+    },
+    [onRemoveFriend],
+  );
+
+  const friendDropdownItems: MenuProps["items"] = [
+    {
+      key: "info",
+      label: vi.sidebar.friendViewInfo,
+      icon: <FiInfo aria-hidden />,
+    },
+    { type: "divider" },
+    {
+      key: "unfriend",
+      label: vi.sidebar.friendRemoveFriend,
+      icon: <FiUserMinus aria-hidden />,
+      danger: true,
+    },
+  ];
+
+  const onFriendMenuClick = useCallback(
+    (friend: FriendUser): MenuProps["onClick"] =>
+      ({ key, domEvent }) => {
+        domEvent.stopPropagation();
+        if (key === "info") {
+          openFriendInfo(friend);
+        }
+        if (key === "unfriend") {
+          confirmUnfriend(friend);
+        }
+      },
+    [confirmUnfriend, openFriendInfo],
+  );
+
   return (
     <Space direction="vertical" style={{ width: "100%" }} size={12}>
       <Text strong className="sidebar-section-title">
@@ -124,22 +185,23 @@ export function ChatSidebarBody({
                 ) : null
               }
               actions={[
-                <Popconfirm
-                  key="remove"
-                  title={vi.sidebar.unfriendTitle}
-                  description={vi.sidebar.unfriendDesc(friend.username)}
-                  okText={vi.sidebar.delete}
-                  cancelText={vi.sidebar.cancel}
-                  onConfirm={() => onRemoveFriend(friend._id)}
+                <Dropdown
+                  key="friend-menu"
+                  menu={{
+                    items: friendDropdownItems,
+                    onClick: onFriendMenuClick(friend),
+                  }}
+                  trigger={["click"]}
+                  placement="bottomRight"
                 >
                   <Button
                     type="text"
-                    danger
                     size="small"
-                    icon={<FiUserMinus />}
+                    icon={<FiMoreVertical />}
+                    aria-label={vi.sidebar.friendMenuAria}
                     onClick={(event) => event.stopPropagation()}
                   />
-                </Popconfirm>,
+                </Dropdown>,
               ]}
             >
               <List.Item.Meta
@@ -153,6 +215,13 @@ export function ChatSidebarBody({
             </List.Item>
           );
         }}
+      />
+
+      <FriendInfoModal
+        open={friendInfoOpen}
+        onClose={closeFriendInfo}
+        friend={friendForInfo}
+        apiBaseUrl={apiBaseUrl}
       />
     </Space>
   );

@@ -13,7 +13,8 @@ export function ThemedConfigProvider({ children }: { children: ReactNode }) {
       theme={{
         algorithm: isDark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
         token: {
-          colorPrimary: "#2563eb",
+          colorPrimary: "#6366f1",
+          borderRadiusLG: 14,
           ...(isDark
             ? {
                 colorBgElevated: "#1a2332",
