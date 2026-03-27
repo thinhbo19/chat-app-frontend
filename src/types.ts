@@ -3,6 +3,7 @@ export type AuthUser = {
   username: string;
   email: string;
   avatar?: string;
+  phone?: string;
   status?: "offline" | "online";
   lastSeenAt?: string;
 };
@@ -10,9 +11,11 @@ export type AuthUser = {
 export type Room = {
   _id: string;
   name: string;
+  /** URL ảnh đại diện nhóm; rỗng = hiển thị chữ cái / icon mặc định */
+  avatar?: string;
   type: "group" | "direct";
   members: Array<{
-    userId: AuthUser;
+    userId: AuthUser | null;
     role: "owner" | "admin" | "member";
   }>;
   createdBy: string;
@@ -36,6 +39,15 @@ export type OutgoingFriendRequest = {
   status: "pending";
   createdAt: string;
   updatedAt: string;
+};
+
+/** Lời mời vào nhóm (chờ người được mời chấp nhận). */
+export type GroupInvite = {
+  _id: string;
+  roomId: { _id: string; name: string; avatar?: string; type: string } | null;
+  invitedByUserId: AuthUser | null;
+  status: string;
+  createdAt: string;
 };
 
 export type FriendUser = AuthUser;

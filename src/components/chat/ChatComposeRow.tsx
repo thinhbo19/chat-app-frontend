@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import { FiFilm, FiImage, FiMic, FiSend, FiX } from "react-icons/fi";
-import { Button, Flex, Input, Popover, Space } from "antd";
+import { Button, Flex, Input, Popover, Progress, Space } from "antd";
 import { vi } from "../../strings/vi";
 
 const EmojiPicker = lazy(() => import("emoji-picker-react"));
@@ -23,6 +23,8 @@ type ChatComposeRowProps = {
   onSubmit: () => void;
   selectedRoomId: string;
   uploadingMedia: boolean;
+  /** 0–100 khi đang upload; null khi không hiển thị thanh tiến trình */
+  uploadProgress: number | null;
   emojiOpen: boolean;
   onEmojiOpenChange: (open: boolean) => void;
   pendingImage: { file: File; previewUrl: string } | null;
@@ -41,6 +43,7 @@ const ChatComposeRowInner = forwardRef<ChatComposeRowHandle, ChatComposeRowProps
       onSubmit,
       selectedRoomId,
       uploadingMedia,
+      uploadProgress,
       emojiOpen,
       onEmojiOpenChange,
       pendingImage,
@@ -95,7 +98,10 @@ const ChatComposeRowInner = forwardRef<ChatComposeRowHandle, ChatComposeRowProps
             </div>
           </div>
         ) : null}
-        <Flex gap={8} align="flex-end" className="chat-compose-row" wrap="wrap" flex="none">
+        {uploadingMedia && uploadProgress != null ? (
+          <Progress percent={uploadProgress} size="small" status="active" className="chat-upload-progress" />
+        ) : null}
+        <Flex vertical gap={8} className="chat-compose-row" flex="none">
           <Space size={4} wrap className="chat-compose-tools">
             <Popover
               open={emojiOpen}
@@ -143,28 +149,30 @@ const ChatComposeRowInner = forwardRef<ChatComposeRowHandle, ChatComposeRowProps
               onClick={onPickAudio}
             />
           </Space>
-          <Input.TextArea
-            className="chat-compose-input"
-            value={draft}
-            placeholder={vi.compose.placeholder}
-            onChange={(event) => setDraft(event.target.value)}
-            onPressEnter={(e) => {
-              if (!e.shiftKey) {
-                e.preventDefault();
-                void onSubmit();
-              }
-            }}
-            disabled={!selectedRoomId}
-            autoSize={{ minRows: 1, maxRows: 3 }}
-          />
-          <Button
-            type="primary"
-            shape="circle"
-            icon={<FiSend />}
-            onClick={() => void onSubmit()}
-            disabled={sendDisabled}
-            className="chat-send-btn"
-          />
+          <Flex gap={8} align="flex-end" className="chat-compose-input-row" wrap={false}>
+            <Input.TextArea
+              className="chat-compose-input"
+              value={draft}
+              placeholder={vi.compose.placeholder}
+              onChange={(event) => setDraft(event.target.value)}
+              onPressEnter={(e) => {
+                if (!e.shiftKey) {
+                  e.preventDefault();
+                  void onSubmit();
+                }
+              }}
+              disabled={!selectedRoomId}
+              autoSize={{ minRows: 1, maxRows: 3 }}
+            />
+            <Button
+              type="primary"
+              shape="circle"
+              icon={<FiSend />}
+              onClick={() => void onSubmit()}
+              disabled={sendDisabled}
+              className="chat-send-btn"
+            />
+          </Flex>
         </Flex>
       </>
     );

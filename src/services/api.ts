@@ -7,6 +7,15 @@ const ACCESS_TOKEN_KEY = "chat_access_token";
 const REFRESH_TOKEN_KEY = "chat_refresh_token";
 const USER_KEY = "chat_user";
 
+/** CustomEvent trên window sau khi access token được làm mới (để Socket.IO reconnect). */
+export const ACCESS_TOKEN_REFRESHED_EVENT = "chat:access-token-refreshed";
+
+function dispatchAccessTokenRefreshed() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(ACCESS_TOKEN_REFRESHED_EVENT));
+  }
+}
+
 export const api = axios.create({
   baseURL: API_BASE_URL,
 });
@@ -27,6 +36,11 @@ export function setAuthData(data: {
   localStorage.setItem(ACCESS_TOKEN_KEY, data.accessToken);
   localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
   localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+}
+
+/** Cập nhật user đã đăng nhập (sau khi sửa hồ sơ) mà không đổi token. */
+export function setStoredUser(user: object) {
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
 export function clearAuthData() {
@@ -94,6 +108,7 @@ api.interceptors.response.use(
       });
       const nextAccessToken = response.data.accessToken as string;
       localStorage.setItem(ACCESS_TOKEN_KEY, nextAccessToken);
+      dispatchAccessTokenRefreshed();
       resolveQueue(nextAccessToken);
       originalRequest.headers.Authorization = `Bearer ${nextAccessToken}`;
       return api(originalRequest);

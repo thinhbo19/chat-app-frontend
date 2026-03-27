@@ -1,8 +1,9 @@
 import { FiHash, FiUserMinus, FiUsers } from "react-icons/fi";
-import { Badge, Button, Divider, Input, List, Popconfirm, Space, Tag, Typography } from "antd";
+import { Avatar, Badge, Button, Divider, Input, List, Popconfirm, Space, Typography } from "antd";
 import { AvatarWithStatus } from "../AvatarWithStatus";
 import { vi } from "../../strings/vi";
 import type { FriendUser, Room } from "../../types";
+import { resolveMediaUrl } from "../../utils/mediaUrl";
 
 const { Text } = Typography;
 
@@ -20,6 +21,7 @@ type ChatSidebarBodyProps = {
   onRemoveFriend: (friendUserId: string) => void;
   unreadByRoomId: Record<string, number>;
   unreadByFriendId: Record<string, number>;
+  apiBaseUrl: string;
 };
 
 export function ChatSidebarBody({
@@ -36,6 +38,7 @@ export function ChatSidebarBody({
   onRemoveFriend,
   unreadByRoomId,
   unreadByFriendId,
+  apiBaseUrl,
 }: ChatSidebarBodyProps) {
   return (
     <Space direction="vertical" style={{ width: "100%" }} size={12}>
@@ -62,6 +65,8 @@ export function ChatSidebarBody({
         locale={{ emptyText: vi.sidebar.noGroupRooms }}
         renderItem={(room) => {
           const n = unreadByRoomId[room._id] ?? 0;
+          const title = getRoomDisplayName(room, myUserId);
+          const initial = title.trim().charAt(0).toUpperCase() || "#";
           return (
             <List.Item
               className={room._id === selectedRoomId ? "room-item-active" : ""}
@@ -73,10 +78,22 @@ export function ChatSidebarBody({
                 ) : null
               }
             >
-              <Space>
-                <Tag color={room._id === selectedRoomId ? "blue" : "default"} />
-                <Text>{getRoomDisplayName(room, myUserId)}</Text>
-              </Space>
+              <List.Item.Meta
+                avatar={
+                  <Avatar
+                    size={44}
+                    src={
+                      room.avatar?.trim()
+                        ? resolveMediaUrl(room.avatar.trim(), apiBaseUrl) || undefined
+                        : undefined
+                    }
+                    className="chat-room-list-avatar"
+                  >
+                    {initial === "#" ? <FiHash /> : initial}
+                  </Avatar>
+                }
+                title={<Text strong={room._id === selectedRoomId}>{title}</Text>}
+              />
             </List.Item>
           );
         }}
@@ -94,6 +111,9 @@ export function ChatSidebarBody({
         renderItem={(friend) => {
           const n = unreadByFriendId[friend._id] ?? 0;
           const online = friend.status === "online";
+          const friendAvatarSrc = friend.avatar?.trim()
+            ? resolveMediaUrl(friend.avatar.trim(), apiBaseUrl) || undefined
+            : undefined;
           return (
             <List.Item
               onClick={() => onOpenDirectRoom(friend._id)}
@@ -124,7 +144,9 @@ export function ChatSidebarBody({
             >
               <List.Item.Meta
                 avatar={
-                  <AvatarWithStatus online={online}>{friend.username.charAt(0).toUpperCase()}</AvatarWithStatus>
+                  <AvatarWithStatus src={friendAvatarSrc} online={online}>
+                    {friend.username.charAt(0).toUpperCase()}
+                  </AvatarWithStatus>
                 }
                 title={<span>{friend.username}</span>}
               />

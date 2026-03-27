@@ -5,6 +5,9 @@ import type { MenuProps } from "antd";
 import { ChatAudioMessage } from "../ChatAudioMessage";
 import { vi } from "../../strings/vi";
 import type { ChatMessage, Room, RoomReadStateEntry } from "../../types";
+import { hasReadThrough } from "../../utils/objectIdCompare";
+import { resolveMediaUrl } from "../../utils/mediaUrl";
+import { isRoomMemberPopulated, type RoomMemberPopulated } from "../../utils/roomMember";
 
 const { Text } = Typography;
 
@@ -16,14 +19,6 @@ function formatTime(isoDate: string) {
   });
 }
 
-function resolveMediaUrl(mediaUrl: string, apiBase: string) {
-  if (!mediaUrl) return "";
-  if (mediaUrl.startsWith("http://") || mediaUrl.startsWith("https://")) {
-    return mediaUrl;
-  }
-  return `${apiBase}${mediaUrl}`;
-}
-
 function readReceiptHint(
   msg: ChatMessage,
   isMine: boolean,
@@ -32,13 +27,16 @@ function readReceiptHint(
   readStates: RoomReadStateEntry[],
 ): string | null {
   if (!isMine || msg.deleted || !room) return null;
-  const others = room.members.filter((m) => m.userId._id !== myUserId);
+  const others = room.members.filter(
+    (m): m is RoomMemberPopulated =>
+      isRoomMemberPopulated(m) && m.userId._id !== myUserId,
+  );
   if (others.length === 0) return null;
   let readCount = 0;
   for (const m of others) {
     const st = readStates.find((s) => s.userId === m.userId._id);
     const lr = st?.lastReadMessageId;
-    if (lr && lr >= msg.id) readCount += 1;
+    if (hasReadThrough(lr, msg.id)) readCount += 1;
   }
   if (readCount === 0) return null;
   if (room.type === "direct") return vi.messageList.readDirect;
@@ -53,6 +51,8 @@ type ChatMessageListProps = {
   apiBaseUrl: string;
   hasMore: boolean;
   loadingOlder: boolean;
+  /** Đang tải lần đầu khi vừa đổi phòng / mở chat */
+  initialLoading?: boolean;
   onLoadOlder: (beforeMessageId: string) => void;
   onRecall: (messageId: string) => void;
   readStates: RoomReadStateEntry[];
@@ -67,6 +67,7 @@ export function ChatMessageList({
   apiBaseUrl,
   hasMore,
   loadingOlder,
+  initialLoading = false,
   onLoadOlder,
   onRecall,
   readStates,
@@ -108,7 +109,11 @@ export function ChatMessageList({
           <Spin size="small" />
         </div>
       ) : null}
-      {messages.length === 0 ? (
+      {initialLoading ? (
+        <div className="empty-messages chat-messages-initial-loading">
+          <Spin size="large" tip={vi.chat.loadingMessages} />
+        </div>
+      ) : messages.length === 0 ? (
         <div className="empty-messages">
           <Text type="secondary">{vi.messageList.empty}</Text>
         </div>

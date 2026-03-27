@@ -7,6 +7,7 @@ import {
   getStoredUser,
   getRefreshToken,
   setAuthData,
+  setStoredUser,
 } from "../services/api";
 import type { AuthUser } from "../types";
 
@@ -20,6 +21,7 @@ type AuthContextType = {
     password: string;
   }) => Promise<void>;
   loadProfile: () => Promise<void>;
+  updateCurrentUser: (user: AuthUser) => void;
   logout: () => Promise<void>;
 };
 
@@ -52,8 +54,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const response = await api.get("/api/auth/me");
-    setUser(response.data.user);
+    const response = await api.get<{ user: AuthUser }>("/api/auth/me");
+    const u = response.data.user;
+    setUser(u);
+    setStoredUser(u);
+  }, []);
+
+  const updateCurrentUser = useCallback((u: AuthUser) => {
+    setUser(u);
+    setStoredUser(u);
   }, []);
 
   const logout = useCallback(async () => {
@@ -76,9 +85,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       register,
       loadProfile,
+      updateCurrentUser,
       logout,
     }),
-    [login, logout, register, loadProfile, user],
+    [login, logout, register, loadProfile, updateCurrentUser, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

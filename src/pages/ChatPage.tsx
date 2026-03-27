@@ -16,11 +16,15 @@ import {
   FiInbox,
   FiInfo,
   FiLogOut,
+  FiHash,
   FiMenu,
   FiMessageCircle,
   FiPhone,
   FiSearch,
   FiSettings,
+  FiUpload,
+  FiUser,
+  FiUserMinus,
   FiUserPlus,
   FiX,
 } from "react-icons/fi";
@@ -35,6 +39,8 @@ import {
   Input,
   List,
   Modal,
+  Popconfirm,
+  Select,
   Space,
   Spin,
   Switch,
@@ -43,9 +49,10 @@ import {
   notification,
 } from "antd";
 import { useNavigate } from "react-router-dom";
-import { api, getAccessToken } from "../services/api";
+import { ACCESS_TOKEN_REFRESHED_EVENT, api, getAccessToken } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { AvatarWithStatus } from "../components/AvatarWithStatus";
+import { PersonalProfileModal } from "../components/profile/PersonalProfileModal";
 
 const ChatSidebarBody = lazy(() =>
   import("../components/chat/ChatSidebarBody").then((m) => ({ default: m.ChatSidebarBody })),
@@ -58,11 +65,16 @@ import { getApiErrorMessage } from "../utils/apiError";
 import { formatChatHeaderPresence } from "../utils/formatPresence";
 import { playMessageBeep, unlockMessageAudio } from "../utils/messageSound";
 import { vi } from "../strings/vi";
+import { isValidFriendUser } from "../utils/friendUser";
+import { resolveMediaUrl } from "../utils/mediaUrl";
+import { isRoomMemberPopulated } from "../utils/roomMember";
 import type {
+  AuthUser,
   ChatMessage,
   ChatMessageContentType,
   FriendRequest,
   FriendUser,
+  GroupInvite,
   OutgoingFriendRequest,
   Room,
   RoomReadStateEntry,
@@ -71,6 +83,8 @@ import type {
 const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 const BROWSE_PAGE_SIZE = 40;
+const UPLOAD_MAX_MB = Number(import.meta.env.VITE_UPLOAD_MAX_MB) || 25;
+const UPLOAD_MAX_BYTES = UPLOAD_MAX_MB * 1024 * 1024;
 
 const { Title, Text } = Typography;
 
@@ -78,13 +92,15 @@ function getRoomDisplayName(room: Room, myUserId: string) {
   if (room.type !== "direct") {
     return room.name;
   }
-  const counterpart = room.members.find((member) => member.userId._id !== myUserId)?.userId;
+  const counterpart = room.members.find(
+    (member) => isRoomMemberPopulated(member) && member.userId._id !== myUserId,
+  )?.userId;
   return counterpart?.username ? `${counterpart.username}` : vi.chat.directFallback;
 }
 
 export default function ChatPage() {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, updateCurrentUser } = useAuth();
   const {
     theme,
     setTheme,
@@ -97,6 +113,7 @@ export default function ChatPage() {
   /** Desktop rail: một panel trái tại một thời điểm (tìm kiếm / chờ / lời mời). */
   const [railPanel, setRailPanel] = useState<null | "search" | "outgoing" | "incoming">(null);
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [isRoomInfoOpen, setIsRoomInfoOpen] = useState(false);
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [addingMemberId, setAddingMemberId] = useState("");
@@ -109,6 +126,8 @@ export default function ChatPage() {
   const [friends, setFriends] = useState<FriendUser[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<FriendRequest[]>([]);
   const [outgoingRequests, setOutgoingRequests] = useState<OutgoingFriendRequest[]>([]);
+  const [groupInvites, setGroupInvites] = useState<GroupInvite[]>([]);
+  const [groupInviteActionId, setGroupInviteActionId] = useState("");
   const [searchText, setSearchText] = useState("");
   const [discoveryList, setDiscoveryList] = useState<FriendUser[]>([]);
   const [discoveryMode, setDiscoveryMode] = useState<"browse" | "search">("browse");
@@ -120,6 +139,7 @@ export default function ChatPage() {
   const browseNextCursorRef = useRef<string | null>(null);
   const browseMoreLockRef = useRef(false);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [pendingImage, setPendingImage] = useState<{ file: File; previewUrl: string } | null>(
     null,
@@ -131,12 +151,20 @@ export default function ChatPage() {
   const audioInputRef = useRef<HTMLInputElement>(null);
 
   const [socket, setSocket] = useState<Socket | null>(null);
+  const socketRef = useRef<Socket | null>(null);
   const [isNarrowLayout, setIsNarrowLayout] = useState(false);
   /** Mobile (narrow): single left drawer = sidebar + cài đặt/tìm kiếm. Desktop: chỉ dùng cho drawer phụ. */
   const [mobileLeftOpen, setMobileLeftOpen] = useState(false);
   const [readStates, setReadStates] = useState<RoomReadStateEntry[]>([]);
   const [messagesHasMore, setMessagesHasMore] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [chatThreadLoading, setChatThreadLoading] = useState(false);
+  const [groupAvatarSaving, setGroupAvatarSaving] = useState(false);
+  const groupAvatarFileInputRef = useRef<HTMLInputElement>(null);
+  const [removingMemberId, setRemovingMemberId] = useState("");
+  const [leaveGroupLoading, setLeaveGroupLoading] = useState(false);
+  const [leaveOwnerModalOpen, setLeaveOwnerModalOpen] = useState(false);
+  const [leaveTransferUserId, setLeaveTransferUserId] = useState<string>("");
   const messagesScrollRef = useRef<HTMLDivElement | null>(null);
   const selectedRoomIdRef = useRef("");
   const settingsRef = useRef({
@@ -212,6 +240,26 @@ export default function ChatPage() {
     };
   }, []);
 
+  useEffect(() => {
+    socketRef.current = socket;
+  }, [socket]);
+
+  useEffect(() => {
+    const onTokenRefreshed = () => {
+      const s = socketRef.current;
+      if (!s) return;
+      const t = getAccessToken();
+      if (!t) return;
+      s.auth = { token: t };
+      if (s.connected) {
+        s.disconnect();
+      }
+      s.connect();
+    };
+    window.addEventListener(ACCESS_TOKEN_REFRESHED_EVENT, onTokenRefreshed);
+    return () => window.removeEventListener(ACCESS_TOKEN_REFRESHED_EVENT, onTokenRefreshed);
+  }, []);
+
   const loadRooms = useCallback(async () => {
     const response = await api.get("/api/rooms/my");
     const list = response.data.rooms as Room[];
@@ -239,17 +287,59 @@ export default function ChatPage() {
 
   const loadFriends = useCallback(async () => {
     const response = await api.get("/api/friends/list");
-    setFriends(response.data.friends);
+    const raw = response.data.friends as FriendUser[];
+    setFriends(Array.isArray(raw) ? raw.filter(isValidFriendUser) : []);
   }, []);
+
+  const handleProfileUserUpdated = useCallback(
+    (u: AuthUser) => {
+      updateCurrentUser(u);
+      void loadRooms();
+      void loadFriends();
+    },
+    [updateCurrentUser, loadRooms, loadFriends],
+  );
 
   const loadIncomingRequests = useCallback(async () => {
     const response = await api.get("/api/friends/requests/incoming");
-    setIncomingRequests(response.data.requests);
-  }, []);
+    const raw = response.data.requests as FriendRequest[];
+    const list = Array.isArray(raw) ? raw : [];
+    const uid = user?._id ? String(user._id) : "";
+    setIncomingRequests(
+      uid ? list.filter((r) => r && String(r.toUserId) === uid) : [],
+    );
+  }, [user?._id]);
 
   const loadOutgoingRequests = useCallback(async () => {
     const response = await api.get("/api/friends/requests/outgoing");
-    setOutgoingRequests(response.data.requests);
+    const raw = response.data.requests as OutgoingFriendRequest[];
+    const list = Array.isArray(raw) ? raw : [];
+    const uid = user?._id ? String(user._id) : "";
+    setOutgoingRequests(
+      uid ? list.filter((r) => r && String(r.fromUserId) === uid) : [],
+    );
+  }, [user?._id]);
+
+  const loadPendingGroupInvites = useCallback(async () => {
+    try {
+      const { data } = await api.get<{ invites: GroupInvite[] }>(
+        "/api/rooms/group-invites/pending",
+      );
+      const list = Array.isArray(data.invites) ? data.invites : [];
+      setGroupInvites(
+        list.filter(
+          (inv) =>
+            inv &&
+            inv._id &&
+            inv.roomId &&
+            inv.invitedByUserId &&
+            isValidFriendUser(inv.invitedByUserId),
+        ),
+      );
+    } catch {
+      message.error(vi.errors.loadGroupInvites);
+      setGroupInvites([]);
+    }
   }, []);
 
   useEffect(() => {
@@ -350,13 +440,21 @@ export default function ChatPage() {
     loadFriends().catch(() => message.error(vi.errors.loadFriends));
     loadIncomingRequests().catch(() => message.error(vi.errors.loadIncoming));
     loadOutgoingRequests().catch(() => message.error(vi.errors.loadOutgoing));
-  }, [loadFriends, loadIncomingRequests, loadOutgoingRequests, loadRooms]);
+    loadPendingGroupInvites().catch(() => null);
+  }, [
+    loadFriends,
+    loadIncomingRequests,
+    loadOutgoingRequests,
+    loadPendingGroupInvites,
+    loadRooms,
+  ]);
 
   useEffect(() => {
     if (!socket) return;
 
     const handleConnect = () => {
       void loadRooms();
+      void loadPendingGroupInvites();
     };
     const handleConnectError = (error: Error) => {
       const latestToken = getAccessToken();
@@ -451,21 +549,23 @@ export default function ChatPage() {
       lastSeenAt?: string;
     }) => {
       setFriends((prev) =>
-        prev.map((f) => {
-          if (f._id !== payload.userId) return f;
-          const next: FriendUser = { ...f, status: payload.status };
-          if (payload.lastSeenAt) {
-            next.lastSeenAt = payload.lastSeenAt;
-          }
-          return next;
-        }),
+        prev
+          .filter(isValidFriendUser)
+          .map((f) => {
+            if (f._id !== payload.userId) return f;
+            const next: FriendUser = { ...f, status: payload.status };
+            if (payload.lastSeenAt) {
+              next.lastSeenAt = payload.lastSeenAt;
+            }
+            return next;
+          }),
       );
       setRooms((prev) =>
         prev.map((room) => ({
           ...room,
           members: room.members.map((mem) => {
-            if (mem.userId._id !== payload.userId) return mem;
-            const u: typeof mem.userId = { ...mem.userId, status: payload.status };
+            if (!isRoomMemberPopulated(mem) || mem.userId._id !== payload.userId) return mem;
+            const u = { ...mem.userId, status: payload.status };
             if (payload.lastSeenAt) {
               u.lastSeenAt = payload.lastSeenAt;
             }
@@ -479,6 +579,9 @@ export default function ChatPage() {
     const handleFriendRequestReceived = () => {
       loadIncomingRequests().catch(() => null);
       message.info(vi.notify.friendRequest);
+    };
+    const handleGroupInviteReceived = () => {
+      loadPendingGroupInvites().catch(() => null);
     };
     const handleFriendshipUpdated = () => {
       loadFriends().catch(() => null);
@@ -499,6 +602,7 @@ export default function ChatPage() {
       loadFriends().catch(() => null);
       loadIncomingRequests().catch(() => null);
       loadOutgoingRequests().catch(() => null);
+      loadPendingGroupInvites().catch(() => null);
     };
     const handleRoomListChanged = () => {
       loadRooms().catch(() => null);
@@ -521,6 +625,7 @@ export default function ChatPage() {
     socket.on("user_status", handleUserStatus);
     socket.on("system_message", handleSystemMessage);
     socket.on("friend_request_received", handleFriendRequestReceived);
+    socket.on("group_invite_received", handleGroupInviteReceived);
     socket.on("friendship_updated", handleFriendshipUpdated);
     socket.on("friend_request_updated", handleFriendRequestUpdated);
     socket.on("friendship_removed", handleFriendshipRemoved);
@@ -537,6 +642,7 @@ export default function ChatPage() {
       socket.off("user_status", handleUserStatus);
       socket.off("system_message", handleSystemMessage);
       socket.off("friend_request_received", handleFriendRequestReceived);
+      socket.off("group_invite_received", handleGroupInviteReceived);
       socket.off("friendship_updated", handleFriendshipUpdated);
       socket.off("friend_request_updated", handleFriendRequestUpdated);
       socket.off("friendship_removed", handleFriendshipRemoved);
@@ -544,17 +650,26 @@ export default function ChatPage() {
       socket.off("room_list_changed", handleRoomListChanged);
       socket.off("direct_room_removed", handleDirectRoomRemoved);
     };
-  }, [socket, loadFriends, loadIncomingRequests, loadOutgoingRequests, loadRooms, user?._id]);
+  }, [
+    socket,
+    loadFriends,
+    loadIncomingRequests,
+    loadOutgoingRequests,
+    loadPendingGroupInvites,
+    loadRooms,
+    user?._id,
+  ]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
       loadFriends().catch(() => null);
       loadIncomingRequests().catch(() => null);
       loadOutgoingRequests().catch(() => null);
+      loadPendingGroupInvites().catch(() => null);
     }, 5000);
 
     return () => window.clearInterval(interval);
-  }, [loadFriends, loadIncomingRequests, loadOutgoingRequests]);
+  }, [loadFriends, loadIncomingRequests, loadOutgoingRequests, loadPendingGroupInvites]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -567,19 +682,24 @@ export default function ChatPage() {
     const onVis = () => {
       if (document.visibilityState === "visible") {
         loadRooms().catch(() => null);
+        loadPendingGroupInvites().catch(() => null);
       }
     };
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
-  }, [loadRooms]);
+  }, [loadRooms, loadPendingGroupInvites]);
 
   useEffect(() => {
     if (!selectedRoomId) {
       setMessages([]);
       setReadStates([]);
       setMessagesHasMore(false);
+      setChatThreadLoading(false);
       return;
     }
+
+    setChatThreadLoading(true);
+    setMessages([]);
 
     let cancelled = false;
     void (async () => {
@@ -595,6 +715,8 @@ export default function ChatPage() {
         setUnreadByRoomId((prev) => ({ ...prev, [selectedRoomId]: 0 }));
       } catch {
         if (!cancelled) message.error(vi.errors.loadHistory);
+      } finally {
+        if (!cancelled) setChatThreadLoading(false);
       }
     })();
 
@@ -628,7 +750,22 @@ export default function ChatPage() {
     const last = messages[messages.length - 1];
     if (markReadTimerRef.current) window.clearTimeout(markReadTimerRef.current);
     markReadTimerRef.current = window.setTimeout(() => {
-      api.post(`/api/rooms/${selectedRoomId}/read`, { messageId: last.id }).catch(() => null);
+      const roomId = selectedRoomId;
+      const messageId = last.id;
+      const s = socketRef.current;
+      if (s?.connected) {
+        s.emit(
+          "mark_room_read",
+          { roomId, messageId },
+          (res: { ok?: boolean }) => {
+            if (!res?.ok) {
+              api.post(`/api/rooms/${roomId}/read`, { messageId }).catch(() => null);
+            }
+          },
+        );
+      } else {
+        api.post(`/api/rooms/${roomId}/read`, { messageId }).catch(() => null);
+      }
     }, 500);
     return () => {
       if (markReadTimerRef.current) window.clearTimeout(markReadTimerRef.current);
@@ -676,13 +813,24 @@ export default function ChatPage() {
     if (!selectedRoomId || !socket) return;
 
     if (pendingImage) {
+      if (pendingImage.file.size > UPLOAD_MAX_BYTES) {
+        message.error(vi.errors.uploadTooLarge(UPLOAD_MAX_MB));
+        return;
+      }
       const formData = new FormData();
       formData.append("file", pendingImage.file);
       setUploadingMedia(true);
+      setUploadProgress(0);
       try {
         const response = await api.post<{ mediaUrl: string; contentType: ChatMessageContentType }>(
           "/api/messages/upload",
           formData,
+          {
+            onUploadProgress: (ev) => {
+              if (!ev.total) return;
+              setUploadProgress(Math.round((ev.loaded / ev.total) * 100));
+            },
+          },
         );
         const caption = composeRef.current?.getText().trim() ?? "";
         socket.emit(
@@ -702,10 +850,11 @@ export default function ChatPage() {
             clearPendingImage();
           },
         );
-      } catch (_error) {
-        message.error(vi.errors.uploadImageFail);
+      } catch (error: unknown) {
+        message.error(getApiErrorMessage(error, vi.errors.uploadImageFail));
       } finally {
         setUploadingMedia(false);
+        setUploadProgress(null);
       }
       return;
     }
@@ -734,13 +883,24 @@ export default function ChatPage() {
       message.warning(vi.errors.pickRoom);
       return;
     }
+    if (file.size > UPLOAD_MAX_BYTES) {
+      message.error(vi.errors.uploadTooLarge(UPLOAD_MAX_MB));
+      return;
+    }
     const formData = new FormData();
     formData.append("file", file);
     setUploadingMedia(true);
+    setUploadProgress(0);
     try {
       const response = await api.post<{ mediaUrl: string; contentType: ChatMessageContentType }>(
         "/api/messages/upload",
         formData,
+        {
+          onUploadProgress: (ev) => {
+            if (!ev.total) return;
+            setUploadProgress(Math.round((ev.loaded / ev.total) * 100));
+          },
+        },
       );
       const caption = composeRef.current?.getText().trim() ?? "";
       socket.emit(
@@ -759,10 +919,11 @@ export default function ChatPage() {
           composeRef.current?.clear();
         },
       );
-    } catch (_error) {
-      message.error(vi.errors.uploadFileFail);
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, vi.errors.uploadFileFail));
     } finally {
       setUploadingMedia(false);
+      setUploadProgress(null);
     }
   }
 
@@ -774,6 +935,10 @@ export default function ChatPage() {
       message.warning(vi.errors.pickImageFile);
       return;
     }
+    if (file.size > UPLOAD_MAX_BYTES) {
+      message.error(vi.errors.uploadTooLarge(UPLOAD_MAX_MB));
+      return;
+    }
     setPendingImage((prev) => {
       if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
       return { file, previewUrl: URL.createObjectURL(file) };
@@ -783,7 +948,12 @@ export default function ChatPage() {
   function onVideoOrAudioFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (file) void uploadAndEmitMedia(file);
+    if (!file) return;
+    if (file.size > UPLOAD_MAX_BYTES) {
+      message.error(vi.errors.uploadTooLarge(UPLOAD_MAX_MB));
+      return;
+    }
+    void uploadAndEmitMedia(file);
   }
 
   async function searchUsers() {
@@ -844,6 +1014,7 @@ export default function ChatPage() {
   }
 
   async function openDirectRoom(friendUserId: string) {
+    setChatThreadLoading(true);
     try {
       const response = await api.post(`/api/rooms/direct/${friendUserId}`);
       const room = response.data.room as Room;
@@ -853,7 +1024,53 @@ export default function ChatPage() {
         setMobileLeftOpen(false);
       }
     } catch (error: unknown) {
+      setChatThreadLoading(false);
       message.error(getApiErrorMessage(error, vi.errors.openDirectFail));
+    }
+  }
+
+  async function onGroupAvatarFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !selectedRoom || selectedRoom.type !== "group") return;
+    if (!file.type.startsWith("image/")) {
+      message.warning(vi.errors.pickImageFile);
+      return;
+    }
+    if (file.size > UPLOAD_MAX_BYTES) {
+      message.error(vi.errors.uploadTooLarge(UPLOAD_MAX_MB));
+      return;
+    }
+    try {
+      setGroupAvatarSaving(true);
+      const formData = new FormData();
+      formData.append("file", file);
+      const up = await api.post<{ mediaUrl: string; contentType: string }>(
+        "/api/messages/upload",
+        formData,
+      );
+      if (up.data.contentType !== "image") {
+        message.warning(vi.errors.pickImageFile);
+        return;
+      }
+      await api.patch(`/api/rooms/${selectedRoom._id}`, { avatar: up.data.mediaUrl });
+      message.success(vi.chat.roomAvatarSaved);
+      await loadRooms();
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, vi.errors.roomAvatarUploadFail));
+    } finally {
+      setGroupAvatarSaving(false);
+    }
+  }
+
+  async function patchMemberRole(memberUserId: string, role: "admin" | "member") {
+    if (!selectedRoom?._id) return;
+    try {
+      await api.patch(`/api/rooms/${selectedRoom._id}/members/${memberUserId}/role`, { role });
+      await loadRooms();
+      message.success(vi.chat.roleUpdated);
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, vi.errors.roleUpdateFail));
     }
   }
 
@@ -869,12 +1086,38 @@ export default function ChatPage() {
     try {
       setAddingMemberId(memberUserId);
       await api.post(`/api/rooms/${selectedRoom._id}/members`, { memberUserId });
-      message.success(vi.errors.memberAdded);
-      await loadRooms();
+      message.success(vi.errors.groupInviteSent);
     } catch (error: unknown) {
       message.error(getApiErrorMessage(error, vi.errors.memberAddFail));
     } finally {
       setAddingMemberId("");
+    }
+  }
+
+  async function acceptGroupInviteAction(inviteId: string) {
+    try {
+      setGroupInviteActionId(inviteId);
+      await api.post(`/api/rooms/group-invites/${inviteId}/accept`);
+      message.success(vi.errors.groupInviteAcceptOk);
+      await loadPendingGroupInvites();
+      await loadRooms();
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, vi.errors.groupInviteAcceptFail));
+    } finally {
+      setGroupInviteActionId("");
+    }
+  }
+
+  async function declineGroupInviteAction(inviteId: string) {
+    try {
+      setGroupInviteActionId(inviteId);
+      await api.post(`/api/rooms/group-invites/${inviteId}/decline`);
+      message.success(vi.errors.groupInviteDeclineOk);
+      await loadPendingGroupInvites();
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, vi.errors.groupInviteDeclineFail));
+    } finally {
+      setGroupInviteActionId("");
     }
   }
 
@@ -887,7 +1130,11 @@ export default function ChatPage() {
     if (!selectedRoom || selectedRoom.type !== "direct") {
       return null;
     }
-    return selectedRoom.members.find((member) => member.userId._id !== currentUserId)?.userId || null;
+    return (
+      selectedRoom.members.find(
+        (member) => isRoomMemberPopulated(member) && member.userId._id !== currentUserId,
+      )?.userId || null
+    );
   }, [selectedRoom, currentUserId]);
 
   const directHeaderPresence = useMemo(
@@ -899,19 +1146,28 @@ export default function ChatPage() {
     if (!selectedRoom || selectedRoom.type !== "group") {
       return [];
     }
-    return selectedRoom.members;
+    return selectedRoom.members.filter(isRoomMemberPopulated);
   }, [selectedRoom]);
   const groupMemberIdSet = useMemo(
     () => new Set(groupMembers.map((member) => member.userId._id)),
     [groupMembers],
   );
+  const friendsSafe = useMemo(() => friends.filter(isValidFriendUser), [friends]);
   const addableFriendsForGroup = useMemo(
-    () => friends.filter((friend) => !groupMemberIdSet.has(friend._id)),
-    [friends, groupMemberIdSet],
+    () => friendsSafe.filter((friend) => !groupMemberIdSet.has(friend._id)),
+    [friendsSafe, groupMemberIdSet],
   );
-  const friendIdSet = useMemo(() => new Set(friends.map((item) => item._id)), [friends]);
+  const friendIdSet = useMemo(
+    () => new Set(friendsSafe.map((item) => item._id)),
+    [friendsSafe],
+  );
   const outgoingIdSet = useMemo(
-    () => new Set(outgoingRequests.map((item) => item.toUserId._id)),
+    () =>
+      new Set(
+        outgoingRequests
+          .map((item) => item.toUserId?._id)
+          .filter((id): id is string => typeof id === "string" && id.length > 0),
+      ),
     [outgoingRequests],
   );
   const visibleDiscoveryResults = useMemo(
@@ -931,7 +1187,9 @@ export default function ChatPage() {
     const out: Record<string, number> = {};
     for (const room of rooms) {
       if (room.type !== "direct") continue;
-      const other = room.members.find((m) => m.userId._id !== currentUserId)?.userId;
+      const other = room.members.find(
+        (m) => isRoomMemberPopulated(m) && m.userId._id !== currentUserId,
+      )?.userId;
       if (other) {
         out[other._id] = unreadByRoomId[room._id] ?? 0;
       }
@@ -941,12 +1199,65 @@ export default function ChatPage() {
 
   const myRoomRole = useMemo(() => {
     if (!selectedRoom) return null;
-    const me = selectedRoom.members.find((m) => m.userId._id === currentUserId);
+    const me = selectedRoom.members.find(
+      (m) => isRoomMemberPopulated(m) && m.userId._id === currentUserId,
+    );
     return me?.role ?? null;
   }, [selectedRoom, currentUserId]);
 
   const canAddGroupMembers =
     selectedRoom?.type === "group" && myRoomRole != null && ["owner", "admin"].includes(myRoomRole);
+
+  const isRoomOwner = myRoomRole === "owner";
+
+  function roleLabel(role: string) {
+    if (role === "owner") return vi.chat.roleOwner;
+    if (role === "admin") return vi.chat.roleAdmin;
+    return vi.chat.roleMember;
+  }
+
+  function canRemoveGroupMember(targetRole: string, targetUserId: string): boolean {
+    if (!selectedRoom || selectedRoom.type !== "group") return false;
+    if (!myRoomRole || !["owner", "admin"].includes(myRoomRole)) return false;
+    if (targetUserId === currentUserId) return false;
+    if (targetRole === "owner") return false;
+    if (myRoomRole === "admin" && targetRole === "admin") return false;
+    return true;
+  }
+
+  async function removeGroupMember(memberUserId: string) {
+    if (!selectedRoom || selectedRoom.type !== "group") return;
+    try {
+      setRemovingMemberId(memberUserId);
+      await api.delete(`/api/rooms/${selectedRoom._id}/members/${memberUserId}`);
+      message.success(vi.chat.memberRemovedOk);
+      await loadRooms();
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, vi.errors.memberRemoveFail));
+    } finally {
+      setRemovingMemberId("");
+    }
+  }
+
+  async function leaveGroupRoom(newOwnerUserId?: string) {
+    if (!selectedRoom || selectedRoom.type !== "group") return;
+    const roomId = selectedRoom._id;
+    try {
+      setLeaveGroupLoading(true);
+      await api.post(`/api/rooms/${roomId}/leave`, newOwnerUserId ? { newOwnerUserId } : {});
+      message.success(vi.chat.leaveGroupOk);
+      await loadRooms();
+      setSelectedRoomId((cur) => (cur === roomId ? "" : cur));
+      setIsRoomInfoOpen(false);
+      setLeaveOwnerModalOpen(false);
+      setLeaveTransferUserId("");
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, vi.errors.leaveGroupFail));
+      throw error;
+    } finally {
+      setLeaveGroupLoading(false);
+    }
+  }
 
   const sidebarBody = (
     <Suspense
@@ -963,6 +1274,7 @@ export default function ChatPage() {
         groupRoomsOnly={groupRoomsOnly}
         selectedRoomId={selectedRoomId}
         onSelectRoom={(roomId) => {
+          setChatThreadLoading(true);
           setSelectedRoomId(roomId);
           if (isNarrowLayout) {
             setMobileLeftOpen(false);
@@ -970,11 +1282,12 @@ export default function ChatPage() {
         }}
         myUserId={user?._id || ""}
         getRoomDisplayName={getRoomDisplayName}
-        friends={friends}
+        friends={friendsSafe}
         onOpenDirectRoom={(id) => void openDirectRoom(id)}
         onRemoveFriend={(id) => void removeFriend(id)}
         unreadByRoomId={unreadByRoomId}
         unreadByFriendId={unreadByFriendId}
+        apiBaseUrl={API_BASE_URL}
       />
     </Suspense>
   );
@@ -983,6 +1296,18 @@ export default function ChatPage() {
 
   const settingsDrawerContent = (
     <Space direction="vertical" style={{ width: "100%" }} size={12}>
+      <Button
+        block
+        type="default"
+        icon={<FiUser aria-hidden />}
+        onClick={() => {
+          setSettingsDrawerOpen(false);
+          setProfileModalOpen(true);
+        }}
+      >
+        {vi.profile.openBtn}
+      </Button>
+      <Divider style={{ margin: "4px 0" }} />
       <Flex justify="space-between" align="center" wrap="wrap" gap={8}>
         <Text>{vi.chat.themeDark}</Text>
         <Switch
@@ -1048,7 +1373,9 @@ export default function ChatPage() {
         ) : (
           <>
             <List
+              className="chat-rail-panel-list"
               size="small"
+              split={false}
               dataSource={visibleDiscoveryResults}
               locale={{ emptyText: vi.chat.noSearch }}
               renderItem={(item) => (
@@ -1056,8 +1383,9 @@ export default function ChatPage() {
                   actions={[
                     <Button
                       key="add"
-                      type="text"
-                      size="small"
+                      type="primary"
+                      size="middle"
+                      className="chat-discovery-add-btn"
                       icon={<FiUserPlus />}
                       onClick={() => sendFriendRequest(item._id)}
                     />,
@@ -1081,9 +1409,13 @@ export default function ChatPage() {
     </Space>
   );
 
+  const incomingNoticeCount = incomingRequests.length + groupInvites.length;
+
   const outgoingPanelContent = (
     <List
+      className="chat-rail-panel-list"
       size="small"
+      split={false}
       dataSource={outgoingRequests}
       locale={{ emptyText: vi.chat.outgoingEmpty }}
       renderItem={(request) => (
@@ -1099,37 +1431,104 @@ export default function ChatPage() {
   );
 
   const incomingPanelContent = (
-    <List
-      size="small"
-      dataSource={incomingRequests}
-      locale={{ emptyText: vi.chat.incomingEmpty }}
-      renderItem={(request) => (
-        <List.Item
-          actions={[
-            <Button
-              key="accept"
-              size="small"
-              type="text"
-              icon={<FiCheck />}
-              onClick={() => handleRequest(request._id, "accept")}
-            />,
-            <Button
-              key="reject"
-              size="small"
-              type="text"
-              danger
-              icon={<FiX />}
-              onClick={() => handleRequest(request._id, "reject")}
-            />,
-          ]}
-        >
-          <List.Item.Meta
-            avatar={<Avatar>{request.fromUserId.username.charAt(0).toUpperCase()}</Avatar>}
-            title={request.fromUserId.username}
-          />
-        </List.Item>
-      )}
-    />
+    <Space direction="vertical" size={14} style={{ width: "100%" }}>
+      <div>
+        <Text strong style={{ display: "block", marginBottom: 8 }}>
+          {vi.chat.groupInvitesSection}
+        </Text>
+        <List
+          className="chat-rail-panel-list"
+          size="small"
+          split={false}
+          dataSource={groupInvites}
+          locale={{ emptyText: vi.chat.groupInvitesEmpty }}
+          renderItem={(inv) => {
+            const inviter = inv.invitedByUserId!;
+            const roomLabel = inv.roomId?.name?.trim() || "Nhóm";
+            return (
+              <List.Item
+                className="chat-incoming-request-item"
+                actions={[
+                  <Button
+                    key="accept-g"
+                    type="primary"
+                    size="middle"
+                    className="chat-friend-request-btn chat-friend-request-btn--accept"
+                    icon={<FiCheck size={18} />}
+                    loading={groupInviteActionId === inv._id}
+                    onClick={() => void acceptGroupInviteAction(inv._id)}
+                  >
+                    {vi.chat.acceptGroupInvite}
+                  </Button>,
+                  <Button
+                    key="decline-g"
+                    size="middle"
+                    danger
+                    className="chat-friend-request-btn chat-friend-request-btn--reject"
+                    icon={<FiX size={18} />}
+                    loading={groupInviteActionId === inv._id}
+                    onClick={() => void declineGroupInviteAction(inv._id)}
+                  >
+                    {vi.chat.declineGroupInvite}
+                  </Button>,
+                ]}
+              >
+                <List.Item.Meta
+                  avatar={<Avatar>{inviter.username.charAt(0).toUpperCase()}</Avatar>}
+                  title={inviter.username}
+                  description={vi.chat.groupInviteIntoRoom(roomLabel)}
+                />
+              </List.Item>
+            );
+          }}
+        />
+      </div>
+      <Divider style={{ margin: 0 }} />
+      <div>
+        <Text strong style={{ display: "block", marginBottom: 8 }}>
+          {vi.chat.friendInviteSection}
+        </Text>
+        <List
+          className="chat-rail-panel-list"
+          size="small"
+          split={false}
+          dataSource={incomingRequests}
+          locale={{ emptyText: vi.chat.incomingEmpty }}
+          renderItem={(request) => (
+            <List.Item
+              className="chat-incoming-request-item"
+              actions={[
+                <Button
+                  key="accept"
+                  type="primary"
+                  size="middle"
+                  className="chat-friend-request-btn chat-friend-request-btn--accept"
+                  icon={<FiCheck size={18} />}
+                  onClick={() => handleRequest(request._id, "accept")}
+                >
+                  {vi.chat.acceptRequest}
+                </Button>,
+                <Button
+                  key="reject"
+                  size="middle"
+                  danger
+                  className="chat-friend-request-btn chat-friend-request-btn--reject"
+                  icon={<FiX size={18} />}
+                  onClick={() => handleRequest(request._id, "reject")}
+                >
+                  {vi.chat.rejectRequest}
+                </Button>,
+              ]}
+            >
+              <List.Item.Meta
+                avatar={<Avatar>{request.fromUserId.username.charAt(0).toUpperCase()}</Avatar>}
+                title={request.fromUserId.username}
+              />
+            </List.Item>
+          )}
+        />
+      </div>
+    </Space>
   );
 
   function toggleRailPanel(panel: "search" | "outgoing" | "incoming") {
@@ -1184,7 +1583,7 @@ export default function ChatPage() {
                 <FiClock />
               </button>
             </Badge>
-            <Badge count={incomingRequests.length} size="small" offset={[-2, 2]}>
+            <Badge count={incomingNoticeCount} size="small" offset={[-2, 2]}>
               <button
                 type="button"
                 className={`chat-rail-btn${railPanel === "incoming" ? " chat-rail-btn--active" : ""}`}
@@ -1256,7 +1655,7 @@ export default function ChatPage() {
         {outgoingPanelContent}
       </Drawer>
       <Drawer
-        title={vi.chat.incoming(incomingRequests.length)}
+        title={vi.chat.incoming(incomingNoticeCount)}
         placement="left"
         width="min(100vw - 16px, 360px)"
         open={railPanel === "incoming"}
@@ -1307,7 +1706,7 @@ export default function ChatPage() {
                   <FiClock aria-hidden />
                 </button>
               </Badge>
-              <Badge count={incomingRequests.length} size="small" offset={[-2, 2]}>
+              <Badge count={incomingNoticeCount} size="small" offset={[-2, 2]}>
                 <button
                   type="button"
                   className={`chat-mobile-top-nav-btn${railPanel === "incoming" ? " chat-mobile-top-nav-btn--active" : ""}`}
@@ -1366,7 +1765,35 @@ export default function ChatPage() {
         />
         <Flex vertical gap={16} className="chat-main-stack">
           <Flex justify="space-between" align="center" gap={8} wrap="wrap" flex="none">
-            <Flex align="center" gap={8} style={{ flex: "1 1 160px", minWidth: 0 }}>
+            <Flex align="center" gap={10} style={{ flex: "1 1 160px", minWidth: 0 }}>
+              {selectedRoom?.type === "group" ? (
+                <Avatar
+                  size={40}
+                  src={
+                    selectedRoom.avatar?.trim()
+                      ? resolveMediaUrl(selectedRoom.avatar.trim(), API_BASE_URL)
+                      : undefined
+                  }
+                  className="chat-main-header-room-avatar"
+                >
+                  {(() => {
+                    const ch = currentRoomName.trim().charAt(0).toUpperCase() || "#";
+                    return ch === "#" ? <FiHash /> : ch;
+                  })()}
+                </Avatar>
+              ) : selectedRoom?.type === "direct" && directCounterpart ? (
+                <Avatar
+                  size={40}
+                  src={
+                    directCounterpart.avatar?.trim()
+                      ? resolveMediaUrl(directCounterpart.avatar.trim(), API_BASE_URL)
+                      : undefined
+                  }
+                  className="chat-main-header-room-avatar"
+                >
+                  {directCounterpart.username.charAt(0).toUpperCase()}
+                </Avatar>
+              ) : null}
               <Flex vertical gap={0} style={{ flex: 1, minWidth: 0 }}>
                 <Title level={4} style={{ margin: 0 }} ellipsis>
                   {currentRoomName}
@@ -1422,6 +1849,7 @@ export default function ChatPage() {
                 apiBaseUrl={API_BASE_URL}
                 hasMore={messagesHasMore}
                 loadingOlder={loadingOlder}
+                initialLoading={chatThreadLoading}
                 onLoadOlder={(beforeId) => void loadOlderMessages(beforeId)}
                 onRecall={(id) => void recallMessage(id)}
                 readStates={readStates}
@@ -1436,6 +1864,7 @@ export default function ChatPage() {
                 onSubmit={() => void submitComposer()}
                 selectedRoomId={selectedRoomId}
                 uploadingMedia={uploadingMedia}
+                uploadProgress={uploadProgress}
                 emojiOpen={emojiOpen}
                 onEmojiOpenChange={setEmojiOpen}
                 pendingImage={pendingImage}
@@ -1469,6 +1898,46 @@ export default function ChatPage() {
         ) : null}
       </Modal>
 
+      <PersonalProfileModal
+        open={profileModalOpen}
+        onClose={() => setProfileModalOpen(false)}
+        user={user}
+        apiBaseUrl={API_BASE_URL}
+        uploadMaxMb={UPLOAD_MAX_MB}
+        uploadMaxBytes={UPLOAD_MAX_BYTES}
+        onUserUpdated={handleProfileUserUpdated}
+      />
+
+      <Modal
+        title={vi.chat.leaveGroupOwnerTitle}
+        open={leaveOwnerModalOpen}
+        onCancel={() => {
+          setLeaveOwnerModalOpen(false);
+          setLeaveTransferUserId("");
+        }}
+        okText={vi.chat.leaveGroupConfirmOwner}
+        okButtonProps={{ disabled: !leaveTransferUserId, loading: leaveGroupLoading }}
+        onOk={() => leaveGroupRoom(leaveTransferUserId)}
+        destroyOnClose
+        centered
+      >
+        <Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
+          {vi.chat.leaveGroupTransferHint}
+        </Text>
+        <Select
+          style={{ width: "100%" }}
+          placeholder={vi.chat.leaveGroupTransferPlaceholder}
+          value={leaveTransferUserId || undefined}
+          onChange={(v) => setLeaveTransferUserId(v)}
+          options={groupMembers
+            .filter((m) => m.userId._id !== currentUserId)
+            .map((m) => ({
+              value: m.userId._id,
+              label: m.userId.username,
+            }))}
+        />
+      </Modal>
+
       <Drawer
         title={selectedRoom?.type === "direct" ? vi.chat.roomInfoDirect : vi.chat.roomInfoGroup}
         placement="right"
@@ -1477,6 +1946,8 @@ export default function ChatPage() {
         onClose={() => {
           setIsRoomInfoOpen(false);
           setIsAddMemberOpen(false);
+          setLeaveOwnerModalOpen(false);
+          setLeaveTransferUserId("");
         }}
       >
         {!selectedRoom ? (
@@ -1484,7 +1955,15 @@ export default function ChatPage() {
         ) : selectedRoom.type === "direct" ? (
           <Space direction="vertical" style={{ width: "100%" }} size={12}>
             <Flex align="center" gap={12}>
-              <AvatarWithStatus size={52} online={directCounterpart?.status === "online"}>
+              <AvatarWithStatus
+                size={52}
+                online={directCounterpart?.status === "online"}
+                src={
+                  directCounterpart?.avatar?.trim()
+                    ? resolveMediaUrl(directCounterpart.avatar.trim(), API_BASE_URL)
+                    : undefined
+                }
+              >
                 {(directCounterpart?.username || "?").charAt(0).toUpperCase()}
               </AvatarWithStatus>
               <Space direction="vertical" size={2}>
@@ -1503,6 +1982,50 @@ export default function ChatPage() {
           </Space>
         ) : (
           <Space direction="vertical" style={{ width: "100%" }} size={12}>
+            <Flex align="center" gap={12}>
+              <Avatar
+                size={52}
+                src={
+                  selectedRoom.avatar?.trim()
+                    ? resolveMediaUrl(selectedRoom.avatar.trim(), API_BASE_URL)
+                    : undefined
+                }
+                className="chat-room-info-avatar"
+              >
+                {(() => {
+                  const t = getRoomDisplayName(selectedRoom, currentUserId).trim();
+                  const ch = t.charAt(0).toUpperCase() || "#";
+                  return ch === "#" ? <FiHash /> : ch;
+                })()}
+              </Avatar>
+              <Text strong style={{ fontSize: 16 }}>
+                {getRoomDisplayName(selectedRoom, currentUserId)}
+              </Text>
+            </Flex>
+            <>
+              <Divider style={{ margin: "4px 0" }} />
+              <input
+                ref={groupAvatarFileInputRef}
+                type="file"
+                accept="image/*"
+                className="chat-hidden-file-input"
+                aria-hidden
+                tabIndex={-1}
+                onChange={(e) => void onGroupAvatarFileSelected(e)}
+              />
+              <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 8 }}>
+                {vi.chat.roomAvatarHint(UPLOAD_MAX_MB)}
+              </Text>
+              <Button
+                type="primary"
+                icon={<FiUpload aria-hidden />}
+                loading={groupAvatarSaving}
+                onClick={() => groupAvatarFileInputRef.current?.click()}
+              >
+                {vi.chat.roomAvatarPick}
+              </Button>
+            </>
+            <Divider style={{ margin: "8px 0" }} />
             <Flex justify="space-between" align="center" wrap="wrap" gap={8}>
               <Text strong>{vi.chat.memberCount(groupMembers.length)}</Text>
               {canAddGroupMembers ? (
@@ -1516,19 +2039,91 @@ export default function ChatPage() {
               dataSource={groupMembers}
               locale={{ emptyText: vi.chat.noMembers }}
               renderItem={(member) => (
-                <List.Item>
+                <List.Item
+                  actions={
+                    canRemoveGroupMember(member.role, member.userId._id)
+                      ? [
+                          <Popconfirm
+                            key="remove"
+                            title={vi.chat.memberRemoveConfirm}
+                            okText={vi.sidebar.delete}
+                            cancelText={vi.sidebar.cancel}
+                            onConfirm={() => void removeGroupMember(member.userId._id)}
+                          >
+                            <Button
+                              type="text"
+                              danger
+                              size="small"
+                              icon={<FiUserMinus />}
+                              loading={removingMemberId === member.userId._id}
+                              aria-label={vi.chat.memberRemoveConfirm}
+                            />
+                          </Popconfirm>,
+                        ]
+                      : undefined
+                  }
+                >
                   <List.Item.Meta
                     avatar={
-                      <AvatarWithStatus online={member.userId.status === "online"}>
+                      <AvatarWithStatus
+                        online={member.userId.status === "online"}
+                        src={
+                          member.userId.avatar?.trim()
+                            ? resolveMediaUrl(member.userId.avatar.trim(), API_BASE_URL)
+                            : undefined
+                        }
+                      >
                         {member.userId.username.charAt(0).toUpperCase()}
                       </AvatarWithStatus>
                     }
                     title={member.userId.username}
-                    description={member.role}
+                    description={
+                      isRoomOwner &&
+                      member.role !== "owner" &&
+                      member.userId._id !== currentUserId ? (
+                        <Select
+                          size="small"
+                          className="chat-member-role-select"
+                          value={member.role}
+                          style={{ minWidth: 148, marginTop: 4 }}
+                          options={[
+                            { value: "admin", label: vi.chat.roleAdmin },
+                            { value: "member", label: vi.chat.roleMember },
+                          ]}
+                          onChange={(v) => void patchMemberRole(member.userId._id, v)}
+                        />
+                      ) : (
+                        <Text type="secondary">{roleLabel(member.role)}</Text>
+                      )
+                    }
                   />
                 </List.Item>
               )}
             />
+            <Divider style={{ margin: "8px 0" }} />
+            {isRoomOwner ? (
+              <Button
+                danger
+                block
+                onClick={() => {
+                  setLeaveTransferUserId("");
+                  setLeaveOwnerModalOpen(true);
+                }}
+              >
+                {vi.chat.leaveGroup}
+              </Button>
+            ) : (
+              <Popconfirm
+                title={vi.chat.leaveGroupConfirm}
+                okText={vi.sidebar.delete}
+                cancelText={vi.sidebar.cancel}
+                onConfirm={() => leaveGroupRoom()}
+              >
+                <Button danger block loading={leaveGroupLoading}>
+                  {vi.chat.leaveGroup}
+                </Button>
+              </Popconfirm>
+            )}
           </Space>
         )}
       </Drawer>
@@ -1562,7 +2157,14 @@ export default function ChatPage() {
               >
                 <List.Item.Meta
                   avatar={
-                    <AvatarWithStatus online={friend.status === "online"}>
+                    <AvatarWithStatus
+                      online={friend.status === "online"}
+                      src={
+                        friend.avatar?.trim()
+                          ? resolveMediaUrl(friend.avatar.trim(), API_BASE_URL)
+                          : undefined
+                      }
+                    >
                       {friend.username.charAt(0).toUpperCase()}
                     </AvatarWithStatus>
                   }

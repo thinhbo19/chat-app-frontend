@@ -14,7 +14,12 @@ npm run dev
 
 Repo đã có `netlify.toml` (`npm run build`, publish `dist`) và `public/_redirects` để SPA (vd. `/chat`) không 404 khi reload.
 
-Trên Netlify → **Environment variables**: đặt `VITE_API_URL` = URL HTTPS backend (vd. `https://your-app.fly.dev`).
+Trên Netlify → **Environment variables**:
+
+- `VITE_API_URL` = URL **HTTPS** của API (vd. `https://your-app.fly.dev`) — không trộn `http` frontend với `https` API nếu trình duyệt chặn mixed content.
+- `VITE_UPLOAD_MAX_MB` (tuỳ chọn) = cùng giá trị với `UPLOAD_MAX_MB` trên backend để kiểm tra kích thước trước khi gửi.
+
+**CORS:** Backend phải đặt `CORS_ORIGIN` đúng origin frontend (vd. `https://your-site.netlify.app`). Để trống chỉ nên dùng khi dev local.
 
 ## Git
 
