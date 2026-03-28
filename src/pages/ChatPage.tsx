@@ -99,7 +99,7 @@ function getRoomDisplayName(room: Room, myUserId: string) {
 
 export default function ChatPage() {
   const navigate = useNavigate();
-  const { user, logout, updateCurrentUser } = useAuth();
+  const { user, logout, updateCurrentUser, loadProfile } = useAuth();
   const {
     theme,
     setTheme,
@@ -173,6 +173,21 @@ export default function ChatPage() {
   const markReadTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const [unreadByRoomId, setUnreadByRoomId] = useState<Record<string, number>>({});
   const [presenceClock, setPresenceClock] = useState(0);
+  const [threadSearchOpen, setThreadSearchOpen] = useState(false);
+  const [threadSearchQuery, setThreadSearchQuery] = useState("");
+  const [threadSearchLoading, setThreadSearchLoading] = useState(false);
+  const [threadSearchHits, setThreadSearchHits] = useState<ChatMessage[]>([]);
+  const [pendingScrollMessageId, setPendingScrollMessageId] = useState<string | null>(null);
+  const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
+
+  const userRef = useRef(user);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  useEffect(() => {
+    void loadProfile();
+  }, [loadProfile]);
 
   useEffect(() => {
     const id = window.setInterval(() => setPresenceClock((n) => n + 1), 60_000);
@@ -181,6 +196,11 @@ export default function ChatPage() {
 
   useEffect(() => {
     selectedRoomIdRef.current = selectedRoomId;
+  }, [selectedRoomId]);
+
+  useEffect(() => {
+    setHighlightMessageId(null);
+    setPendingScrollMessageId(null);
   }, [selectedRoomId]);
 
   useEffect(() => {
@@ -435,6 +455,37 @@ export default function ChatPage() {
   );
 
   useEffect(() => {
+    if (!pendingScrollMessageId || !selectedRoomId) return;
+    const found = messages.some((m) => m.id === pendingScrollMessageId);
+    if (found) {
+      setHighlightMessageId(pendingScrollMessageId);
+      setPendingScrollMessageId(null);
+      setThreadSearchOpen(false);
+      return;
+    }
+    if (loadingOlder) return;
+    if (!messagesHasMore) {
+      message.info(vi.chat.scrollToMessageFail);
+      setPendingScrollMessageId(null);
+      return;
+    }
+    const first = messages[0];
+    if (!first) {
+      message.info(vi.chat.scrollToMessageFail);
+      setPendingScrollMessageId(null);
+      return;
+    }
+    void loadOlderMessages(first.id);
+  }, [
+    pendingScrollMessageId,
+    messages,
+    messagesHasMore,
+    loadingOlder,
+    selectedRoomId,
+    loadOlderMessages,
+  ]);
+
+  useEffect(() => {
     loadRooms().catch(() => message.error(vi.errors.loadRooms));
     loadFriends().catch(() => message.error(vi.errors.loadFriends));
     loadIncomingRequests().catch(() => message.error(vi.errors.loadIncoming));
@@ -490,30 +541,34 @@ export default function ChatPage() {
         }));
       }
       if (!fromOther) return;
+      const prefs = userRef.current?.chatRoomPrefs;
+      const mutedRoom = Boolean(prefs?.find((x) => x.roomId === incomingRoomId)?.muted);
       const { soundNotify: snd, desktopNotify: dsk } = settingsRef.current;
       const isCurrentRoom = incomingRoomId === roomId;
-      if (!isCurrentRoom) {
-        if (document.visibilityState === "visible") {
-          notification.info({
-            key: `incoming-${incomingRoomId}`,
-            message: incoming.sender.username,
-            description: previewIncoming(incoming),
-            placement: "topRight",
-            duration: 4.5,
-          });
-        } else if (
-          dsk &&
-          typeof Notification !== "undefined" &&
-          Notification.permission === "granted"
-        ) {
-          new Notification(incoming.sender.username, {
-            body: previewIncoming(incoming),
-            tag: incoming.id,
-          });
+      if (!mutedRoom) {
+        if (!isCurrentRoom) {
+          if (document.visibilityState === "visible") {
+            notification.info({
+              key: `incoming-${incomingRoomId}`,
+              message: incoming.sender.username,
+              description: previewIncoming(incoming),
+              placement: "topRight",
+              duration: 4.5,
+            });
+          } else if (
+            dsk &&
+            typeof Notification !== "undefined" &&
+            Notification.permission === "granted"
+          ) {
+            new Notification(incoming.sender.username, {
+              body: previewIncoming(incoming),
+              tag: incoming.id,
+            });
+          }
         }
-      }
-      if (snd && (!isCurrentRoom || document.visibilityState === "hidden")) {
-        playMessageBeep();
+        if (snd && (!isCurrentRoom || document.visibilityState === "hidden")) {
+          playMessageBeep();
+        }
       }
     };
 
@@ -606,6 +661,13 @@ export default function ChatPage() {
     const handleRoomListChanged = () => {
       loadRooms().catch(() => null);
     };
+    const handleRoomPinsUpdated = (payload: { roomId: string; pinnedMessageIds: string[] }) => {
+      setRooms((prev) =>
+        prev.map((r) =>
+          r._id === payload.roomId ? { ...r, pinnedMessageIds: payload.pinnedMessageIds } : r,
+        ),
+      );
+    };
     const handleDirectRoomRemoved = (payload: { roomId?: string }) => {
       if (payload?.roomId && payload.roomId === selectedRoomIdRef.current) {
         setSelectedRoomId("");
@@ -630,6 +692,7 @@ export default function ChatPage() {
     socket.on("friendship_removed", handleFriendshipRemoved);
     socket.on("friend_data_changed", handleFriendDataChanged);
     socket.on("room_list_changed", handleRoomListChanged);
+    socket.on("room_pins_updated", handleRoomPinsUpdated);
     socket.on("direct_room_removed", handleDirectRoomRemoved);
 
     return () => {
@@ -647,6 +710,7 @@ export default function ChatPage() {
       socket.off("friendship_removed", handleFriendshipRemoved);
       socket.off("friend_data_changed", handleFriendDataChanged);
       socket.off("room_list_changed", handleRoomListChanged);
+      socket.off("room_pins_updated", handleRoomPinsUpdated);
       socket.off("direct_room_removed", handleDirectRoomRemoved);
     };
   }, [
@@ -792,6 +856,95 @@ export default function ChatPage() {
       await api.delete(`/api/rooms/${selectedRoomId}/messages/${messageId}`);
     } catch (error: unknown) {
       message.error(getApiErrorMessage(error, vi.errors.recall));
+    }
+  }
+
+  async function toggleMessageReaction(messageId: string, emoji: string) {
+    if (!selectedRoomId) return;
+    try {
+      const { data } = await api.post<{ message: ChatMessage }>(
+        `/api/rooms/${selectedRoomId}/messages/${messageId}/reaction`,
+        { emoji },
+      );
+      if (data?.message) {
+        setMessages((prev) => prev.map((m) => (m.id === messageId ? data.message : m)));
+      }
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, vi.errors.reactionFail));
+    }
+  }
+
+  async function pinThreadMessage(messageId: string) {
+    if (!selectedRoomId) return;
+    try {
+      const { data } = await api.post<{ room: Room; pinnedMessageIds: string[] }>(
+        `/api/rooms/${selectedRoomId}/pins`,
+        { messageId },
+      );
+      message.success(vi.chat.pinOk);
+      if (data?.room) {
+        setRooms((prev) =>
+          prev.map((r) => (r._id === selectedRoomId ? { ...(data.room as Room) } : r)),
+        );
+      }
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, vi.errors.pinMessageFail));
+    }
+  }
+
+  async function unpinThreadMessage(messageId: string) {
+    if (!selectedRoomId) return;
+    try {
+      const { data } = await api.delete<{ room: Room; pinnedMessageIds: string[] }>(
+        `/api/rooms/${selectedRoomId}/pins/${messageId}`,
+      );
+      message.success(vi.chat.unpinOk);
+      if (data?.room) {
+        setRooms((prev) =>
+          prev.map((r) => (r._id === selectedRoomId ? { ...(data.room as Room) } : r)),
+        );
+      }
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, vi.errors.unpinMessageFail));
+    }
+  }
+
+  async function patchRoomPrefs(partial: { muted?: boolean; sidebarPinned?: boolean }) {
+    if (!selectedRoom?._id) return;
+    try {
+      const { data } = await api.patch<{ user: AuthUser }>(`/api/users/me/room-prefs`, {
+        roomId: selectedRoom._id,
+        ...partial,
+      });
+      updateCurrentUser(data.user);
+      if (partial.muted !== undefined) {
+        message.success(vi.chat.muteOk);
+      } else if (partial.sidebarPinned !== undefined) {
+        message.success(vi.chat.pinRoomTopOk);
+      }
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, vi.errors.roomPrefsFail));
+    }
+  }
+
+  async function runThreadSearch() {
+    const q = threadSearchQuery.trim();
+    if (!selectedRoomId || !q) {
+      setThreadSearchHits([]);
+      return;
+    }
+    setThreadSearchLoading(true);
+    try {
+      const { data } = await api.get<{ messages: ChatMessage[] }>(
+        `/api/rooms/${selectedRoomId}/messages/search`,
+        { params: { q, limit: 40 } },
+      );
+      setThreadSearchHits(Array.isArray(data.messages) ? data.messages : []);
+    } catch (error: unknown) {
+      message.error(getApiErrorMessage(error, vi.errors.searchThreadFail));
+      setThreadSearchHits([]);
+    } finally {
+      setThreadSearchLoading(false);
     }
   }
 
@@ -1183,10 +1336,20 @@ export default function ChatPage() {
     [discoveryList, friendIdSet, outgoingIdSet],
   );
 
-  const groupRoomsOnly = useMemo(
-    () => rooms.filter((room) => room.type === "group"),
-    [rooms],
-  );
+  const sortedGroupRooms = useMemo(() => {
+    const pinIds = new Set(
+      (user?.chatRoomPrefs || [])
+        .filter((p) => p.sidebarPinned)
+        .map((p) => p.roomId),
+    );
+    const list = rooms.filter((room) => room.type === "group");
+    return [...list].sort((a, b) => {
+      const ap = pinIds.has(a._id) ? 1 : 0;
+      const bp = pinIds.has(b._id) ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    });
+  }, [rooms, user?.chatRoomPrefs]);
 
   const unreadByFriendId = useMemo(() => {
     const out: Record<string, number> = {};
@@ -1214,6 +1377,17 @@ export default function ChatPage() {
     selectedRoom?.type === "group" && myRoomRole != null && ["owner", "admin"].includes(myRoomRole);
 
   const isRoomOwner = myRoomRole === "owner";
+
+  const roomPref = useMemo(() => {
+    if (!selectedRoomId || !user?.chatRoomPrefs) return null;
+    return user.chatRoomPrefs.find((p) => p.roomId === selectedRoomId) ?? null;
+  }, [selectedRoomId, user?.chatRoomPrefs]);
+
+  const canPinMessagesInThread = useMemo(() => {
+    if (!selectedRoom) return false;
+    if (selectedRoom.type === "direct") return true;
+    return myRoomRole != null && ["owner", "admin"].includes(myRoomRole);
+  }, [selectedRoom, myRoomRole]);
 
   function roleLabel(role: string) {
     if (role === "owner") return vi.chat.roleOwner;
@@ -1276,7 +1450,7 @@ export default function ChatPage() {
         roomName={roomName}
         onRoomNameChange={setRoomName}
         onCreateRoom={() => void createRoom()}
-        groupRoomsOnly={groupRoomsOnly}
+        groupRoomsOnly={sortedGroupRooms}
         selectedRoomId={selectedRoomId}
         onSelectRoom={(roomId) => {
           setChatThreadLoading(true);
@@ -1822,6 +1996,18 @@ export default function ChatPage() {
               <Button
                 className="chat-header-icon-btn"
                 shape="circle"
+                icon={<FiSearch />}
+                aria-label={vi.chat.searchInThread}
+                disabled={!selectedRoomId}
+                onClick={() => {
+                  setThreadSearchOpen(true);
+                  setThreadSearchQuery("");
+                  setThreadSearchHits([]);
+                }}
+              />
+              <Button
+                className="chat-header-icon-btn"
+                shape="circle"
                 icon={<FiPhone />}
               />
               <Button
@@ -1855,6 +2041,37 @@ export default function ChatPage() {
               style={{ flex: "1 1 0%", minHeight: 0, minWidth: 0, overflow: "hidden" }}
               vertical
             >
+              {selectedRoom &&
+              Array.isArray(selectedRoom.pinnedMessageIds) &&
+              selectedRoom.pinnedMessageIds.length > 0 ? (
+                <Flex gap={8} className="chat-pinned-banner" align="center">
+                  <Text type="secondary" style={{ flex: "none", fontSize: 12 }}>
+                    {vi.chat.pinnedMessages}:
+                  </Text>
+                  <Space size={4} wrap style={{ flex: 1, minWidth: 0 }}>
+                    {selectedRoom.pinnedMessageIds.map((pid) => {
+                      const hit = messages.find((m) => m.id === pid);
+                      const label = hit
+                        ? hit.deleted
+                          ? vi.preview.recalled
+                          : (hit.text || "").trim().slice(0, 48) ||
+                            (hit.contentType !== "text" ? vi.preview[hit.contentType] : "…")
+                        : "…";
+                      return (
+                        <Button
+                          key={pid}
+                          type="link"
+                          size="small"
+                          className="chat-pinned-chip"
+                          onClick={() => setPendingScrollMessageId(pid)}
+                        >
+                          {label || "…"}
+                        </Button>
+                      );
+                    })}
+                  </Space>
+                </Flex>
+              ) : null}
               <ChatMessageList
                 messages={messages}
                 currentUserId={currentUserId}
@@ -1865,6 +2082,12 @@ export default function ChatPage() {
                 initialLoading={chatThreadLoading}
                 onLoadOlder={(beforeId) => void loadOlderMessages(beforeId)}
                 onRecall={(id) => void recallMessage(id)}
+                onToggleReaction={(mid, emoji) => void toggleMessageReaction(mid, emoji)}
+                onPinMessage={(mid) => void pinThreadMessage(mid)}
+                onUnpinMessage={(mid) => void unpinThreadMessage(mid)}
+                canPinMessages={canPinMessagesInThread}
+                pinnedMessageIds={selectedRoom?.pinnedMessageIds ?? []}
+                highlightMessageId={highlightMessageId}
                 readStates={readStates}
                 listEndRef={endOfMessagesRef}
                 listScrollRef={messagesScrollRef}
@@ -1909,6 +2132,52 @@ export default function ChatPage() {
             style={{ width: "100%", maxHeight: "70vh", objectFit: "contain", borderRadius: 8 }}
           />
         ) : null}
+      </Modal>
+
+      <Modal
+        title={vi.chat.searchInThreadTitle}
+        open={threadSearchOpen}
+        onCancel={() => setThreadSearchOpen(false)}
+        footer={null}
+        destroyOnClose
+        centered
+        width="min(92vw, 440px)"
+      >
+        <Space direction="vertical" style={{ width: "100%" }} size={12}>
+          <Space.Compact style={{ width: "100%" }}>
+            <Input
+              placeholder={vi.chat.searchInThreadPlaceholder}
+              value={threadSearchQuery}
+              onChange={(e) => setThreadSearchQuery(e.target.value)}
+              onPressEnter={() => void runThreadSearch()}
+              allowClear
+            />
+            <Button type="primary" loading={threadSearchLoading} onClick={() => void runThreadSearch()}>
+              {vi.chat.search}
+            </Button>
+          </Space.Compact>
+          <List
+            size="small"
+            dataSource={threadSearchHits}
+            locale={{ emptyText: vi.chat.searchInThreadEmpty }}
+            loading={threadSearchLoading}
+            renderItem={(hit) => (
+              <List.Item
+                style={{ cursor: "pointer" }}
+                onClick={() => setPendingScrollMessageId(hit.id)}
+              >
+                <List.Item.Meta
+                  title={
+                    <Text ellipsis style={{ maxWidth: "100%" }}>
+                      {vi.chat.searchInThreadHit(hit.text || "")}
+                    </Text>
+                  }
+                  description={`${hit.sender.username} · ${new Date(hit.createdAt).toLocaleString("vi-VN")}`}
+                />
+              </List.Item>
+            )}
+          />
+        </Space>
       </Modal>
 
       <PersonalProfileModal
@@ -1992,6 +2261,14 @@ export default function ChatPage() {
             <Text type="secondary">
               {vi.chat.roomId}: {selectedRoom._id}
             </Text>
+            <Divider style={{ margin: "8px 0" }} />
+            <Flex justify="space-between" align="center" wrap="wrap" gap={8}>
+              <Text>{vi.chat.muteRoom}</Text>
+              <Switch
+                checked={Boolean(roomPref?.muted)}
+                onChange={(checked) => void patchRoomPrefs({ muted: checked })}
+              />
+            </Flex>
           </Space>
         ) : (
           <Space direction="vertical" style={{ width: "100%" }} size={12}>
@@ -2014,6 +2291,21 @@ export default function ChatPage() {
               <Text strong style={{ fontSize: 16 }}>
                 {getRoomDisplayName(selectedRoom, currentUserId)}
               </Text>
+            </Flex>
+            <Divider style={{ margin: "6px 0" }} />
+            <Flex justify="space-between" align="center" wrap="wrap" gap={8}>
+              <Text>{vi.chat.muteRoom}</Text>
+              <Switch
+                checked={Boolean(roomPref?.muted)}
+                onChange={(checked) => void patchRoomPrefs({ muted: checked })}
+              />
+            </Flex>
+            <Flex justify="space-between" align="center" wrap="wrap" gap={8}>
+              <Text>{vi.chat.pinRoomTop}</Text>
+              <Switch
+                checked={Boolean(roomPref?.sidebarPinned)}
+                onChange={(checked) => void patchRoomPrefs({ sidebarPinned: checked })}
+              />
             </Flex>
             <>
               <Divider style={{ margin: "4px 0" }} />

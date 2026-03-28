@@ -1,3 +1,9 @@
+export type ChatRoomPref = {
+  roomId: string;
+  muted: boolean;
+  sidebarPinned: boolean;
+};
+
 export type AuthUser = {
   _id: string;
   username: string;
@@ -6,6 +12,7 @@ export type AuthUser = {
   phone?: string;
   status?: "offline" | "online";
   lastSeenAt?: string;
+  chatRoomPrefs?: ChatRoomPref[];
 };
 
 export type Room = {
@@ -21,6 +28,7 @@ export type Room = {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  pinnedMessageIds?: string[];
 };
 
 export type FriendRequest = {
@@ -54,6 +62,12 @@ export type FriendUser = AuthUser;
 
 export type ChatMessageContentType = "text" | "image" | "video" | "audio";
 
+export type MessageReaction = {
+  userId: string;
+  username: string;
+  emoji: string;
+};
+
 export type ChatMessage = {
   id: string;
   roomId: string;
@@ -62,6 +76,7 @@ export type ChatMessage = {
   mediaUrl: string;
   createdAt: string;
   deleted?: boolean;
+  reactions?: MessageReaction[];
   sender: {
     id: string;
     username: string;
