@@ -23,7 +23,6 @@ import {
   FiSearch,
   FiSettings,
   FiUpload,
-  FiUser,
   FiUserMinus,
   FiUserPlus,
   FiX,
@@ -1126,6 +1125,12 @@ export default function ChatPage() {
     ? getRoomDisplayName(selectedRoom, user?._id || "")
     : vi.chat.noRoom;
   const currentUserId = user?._id || "";
+  const myRailAvatarSrc = useMemo(() => {
+    const a = user?.avatar?.trim();
+    if (!a) return undefined;
+    return resolveMediaUrl(a, API_BASE_URL) || undefined;
+  }, [user?.avatar]);
+
   const directCounterpart = useMemo(() => {
     if (!selectedRoom || selectedRoom.type !== "direct") {
       return null;
@@ -1296,18 +1301,6 @@ export default function ChatPage() {
 
   const settingsDrawerContent = (
     <Space direction="vertical" style={{ width: "100%" }} size={12}>
-      <Button
-        block
-        type="default"
-        icon={<FiUser aria-hidden />}
-        onClick={() => {
-          setSettingsDrawerOpen(false);
-          setProfileModalOpen(true);
-        }}
-      >
-        {vi.profile.openBtn}
-      </Button>
-      <Divider style={{ margin: "4px 0" }} />
       <Flex justify="space-between" align="center" wrap="wrap" gap={8}>
         <Text>{vi.chat.themeDark}</Text>
         <Switch
@@ -1562,6 +1555,16 @@ export default function ChatPage() {
       {!isNarrowLayout ? (
         <aside className="chat-rail">
           <div className="chat-rail-stack chat-rail-stack--top">
+            <button
+              type="button"
+              className="chat-rail-avatar-btn"
+              onClick={() => setProfileModalOpen(true)}
+              aria-label={vi.profile.openBtn}
+            >
+              <Avatar size={44} src={myRailAvatarSrc}>
+                {(user?.username || "?").charAt(0).toUpperCase()}
+              </Avatar>
+            </button>
             <span className="chat-rail-btn chat-rail-btn--active">
               <FiMessageCircle aria-hidden />
             </span>
@@ -1680,6 +1683,16 @@ export default function ChatPage() {
         <nav className="chat-mobile-top-nav">
           <div className="chat-mobile-top-nav-inner">
             <div className="chat-mobile-top-nav-group">
+              <button
+                type="button"
+                className="chat-mobile-top-nav-avatar"
+                onClick={() => setProfileModalOpen(true)}
+                aria-label={vi.profile.openBtn}
+              >
+                <Avatar size={36} src={myRailAvatarSrc}>
+                  {(user?.username || "?").charAt(0).toUpperCase()}
+                </Avatar>
+              </button>
               <button
                 type="button"
                 className={`chat-mobile-top-nav-btn${mobileLeftOpen ? " chat-mobile-top-nav-btn--active" : ""}`}

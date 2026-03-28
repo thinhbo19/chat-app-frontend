@@ -192,6 +192,200 @@ body::after {
   width: 100%;
 }
 
+.chat-rail-avatar-btn {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  margin: 0 0 2px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.chat-rail-avatar-btn:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 3px;
+}
+
+.chat-rail-avatar-btn:hover {
+  transform: scale(1.05);
+}
+
+.chat-rail-avatar-btn .ant-avatar {
+  border: 2px solid rgba(165, 180, 252, 0.55);
+  box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35);
+}
+
+.chat-rail-avatar-btn:hover .ant-avatar {
+  border-color: rgba(255, 255, 255, 0.65);
+}
+
+.chat-mobile-top-nav-avatar {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: transform 0.2s ease;
+}
+
+.chat-mobile-top-nav-avatar:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+
+.chat-mobile-top-nav-avatar:hover {
+  transform: scale(1.05);
+}
+
+.chat-mobile-top-nav-avatar .ant-avatar {
+  border: 2px solid rgba(99, 102, 241, 0.35);
+}
+
+.personal-profile-modal .ant-modal-content {
+  border-radius: var(--radius-panel);
+  overflow: hidden;
+}
+
+.personal-profile-modal .ant-modal-header {
+  border-bottom: 1px solid rgba(99, 102, 241, 0.12);
+}
+
+/* Chiều cao cố định (tối đa 440px) — không đổi khi chuyển tab; chỉ co theo màn hình thấp */
+.personal-profile-modal .ant-modal-body {
+  height: min(440px, calc(100dvh - 140px));
+  box-sizing: border-box;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.profile-modal-split {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  gap: 0;
+  align-items: stretch;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.profile-modal-split-nav {
+  flex: 0 0 200px;
+  align-self: stretch;
+  padding-right: 16px;
+  margin-right: 16px;
+  border-right: 1px solid rgba(99, 102, 241, 0.12);
+}
+
+.profile-modal-split-nav .ant-menu {
+  border-inline-end: none !important;
+  background: transparent;
+}
+
+.profile-modal-split-nav .ant-menu-item {
+  border-radius: 10px !important;
+  margin-inline: 0 !important;
+}
+
+.profile-modal-split-nav .ant-menu-vertical > .ant-menu-item {
+  width: 100%;
+}
+
+/* Menu ngang (màn nhỏ): luôn hiện đủ chữ, không thu vào "..." — nhờ disabledOverflow + style dưới */
+.profile-modal-split-nav .profile-modal-nav-menu.ant-menu-horizontal {
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  border-bottom: none !important;
+  line-height: 1.35;
+}
+
+.profile-modal-split-nav .profile-modal-nav-menu.ant-menu-horizontal > .ant-menu-item {
+  width: auto !important;
+  margin: 0 !important;
+  padding: 8px 12px !important;
+  height: auto !important;
+  line-height: inherit !important;
+}
+
+.profile-modal-split-nav .profile-modal-nav-menu.ant-menu-horizontal > .ant-menu-item + .ant-menu-item {
+  border-left: 1px solid rgba(99, 102, 241, 0.28);
+  padding-left: 14px !important;
+  margin-left: 2px !important;
+}
+
+.profile-modal-split-panel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding-top: 4px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+@media (max-width: 576px) {
+  .personal-profile-modal .ant-modal-body {
+    height: min(440px, calc(100dvh - 120px));
+  }
+
+  .profile-modal-split {
+    flex-direction: column;
+  }
+
+  .profile-modal-split-nav {
+    flex: none;
+    align-self: stretch;
+    padding-right: 0;
+    margin-right: 0;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-right: none;
+    border-bottom: 1px solid rgba(99, 102, 241, 0.12);
+  }
+
+}
+
+.theme-dark .profile-modal-split-nav {
+  border-right-color: rgba(129, 140, 248, 0.2);
+}
+
+.theme-dark .profile-modal-split-nav .ant-menu-item {
+  color: #cbd5e1;
+}
+
+.theme-dark .profile-modal-split-nav .ant-menu-item-selected {
+  background: rgba(99, 102, 241, 0.22) !important;
+  color: #f1f5f9 !important;
+}
+
+.theme-dark .profile-modal-split-nav .profile-modal-nav-menu.ant-menu-horizontal > .ant-menu-item + .ant-menu-item {
+  border-left-color: rgba(129, 140, 248, 0.35);
+}
+
+@media (max-width: 576px) {
+  .theme-dark .profile-modal-split-nav {
+    border-bottom-color: rgba(129, 140, 248, 0.2);
+  }
+}
+
 .chat-rail-btn {
   width: 46px;
   height: 46px;

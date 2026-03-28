@@ -110,6 +110,8 @@ export const vi = {
   profile: {
     openBtn: "Hồ sơ cá nhân",
     title: "Thông tin tài khoản",
+    menuInfo: "Thông tin",
+    menuPassword: "Đổi mật khẩu",
     avatarHint: (maxMb: number) => `Ảnh đại diện — file ảnh, tối đa ${maxMb} MB`,
     pickAvatar: "Chọn ảnh",
     username: "Tên đăng nhập",
