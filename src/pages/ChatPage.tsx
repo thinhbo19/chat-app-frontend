@@ -10,16 +10,13 @@ import {
 import { ChatComposeRow, type ChatComposeRowHandle } from "../components/chat/ChatComposeRow";
 import { io, Socket } from "socket.io-client";
 import {
-  FiCamera,
   FiCheck,
   FiClock,
   FiInbox,
-  FiInfo,
   FiLogOut,
   FiHash,
   FiMenu,
   FiMessageCircle,
-  FiPhone,
   FiSearch,
   FiSettings,
   FiUpload,
@@ -52,6 +49,8 @@ import { ACCESS_TOKEN_REFRESHED_EVENT, api, getAccessToken } from "../services/a
 import { useAuth } from "../context/AuthContext";
 import { AvatarWithStatus } from "../components/AvatarWithStatus";
 import { PersonalProfileModal } from "../components/profile/PersonalProfileModal";
+import { ChatSettingsPanel } from "../components/chat/ChatSettingsPanel";
+import { ChatThreadHeader } from "../components/chat/ChatThreadHeader";
 
 const ChatSidebarBody = lazy(() =>
   import("../components/chat/ChatSidebarBody").then((m) => ({ default: m.ChatSidebarBody })),
@@ -85,7 +84,7 @@ const BROWSE_PAGE_SIZE = 40;
 const UPLOAD_MAX_MB = Number(import.meta.env.VITE_UPLOAD_MAX_MB) || 25;
 const UPLOAD_MAX_BYTES = UPLOAD_MAX_MB * 1024 * 1024;
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 function getRoomDisplayName(room: Room, myUserId: string) {
   if (room.type !== "direct") {
@@ -103,6 +102,8 @@ export default function ChatPage() {
   const {
     theme,
     setTheme,
+    uiPreset,
+    setUiPreset,
     desktopNotify,
     setDesktopNotify,
     soundNotify,
@@ -1474,36 +1475,25 @@ export default function ChatPage() {
   const sidebarCardTitle = vi.chat.greeting(user?.username || "");
 
   const settingsDrawerContent = (
-    <Space direction="vertical" style={{ width: "100%" }} size={12}>
-      <Flex justify="space-between" align="center" wrap="wrap" gap={8}>
-        <Text>{vi.chat.themeDark}</Text>
-        <Switch
-          checked={theme === "dark"}
-          onChange={(checked) => setTheme(checked ? "dark" : "light")}
-        />
-      </Flex>
-      <Flex justify="space-between" align="center" wrap="wrap" gap={8}>
-        <Text>{vi.chat.desktopNotify}</Text>
-        <Switch
-          checked={desktopNotify}
-          onChange={async (checked) => {
-            if (checked) {
-              const p = await requestNotificationPermission();
-              if (p !== "granted") {
-                message.warning(vi.chat.notifyDenied);
-                return;
-              }
-            }
-            setDesktopNotify(checked);
-          }}
-        />
-      </Flex>
-      <Flex justify="space-between" align="center" wrap="wrap" gap={8}>
-        <Text>{vi.chat.soundNotify}</Text>
-        <Switch checked={soundNotify} onChange={setSoundNotify} />
-      </Flex>
-      <Text type="secondary">{vi.chat.languageNote}</Text>
-    </Space>
+    <ChatSettingsPanel
+      uiPreset={uiPreset}
+      onUiPresetChange={setUiPreset}
+      theme={theme}
+      onThemeChange={setTheme}
+      desktopNotify={desktopNotify}
+      onDesktopNotifyChange={async (checked) => {
+        if (checked) {
+          const p = await requestNotificationPermission();
+          if (p !== "granted") {
+            message.warning(vi.chat.notifyDenied);
+            return;
+          }
+        }
+        setDesktopNotify(checked);
+      }}
+      soundNotify={soundNotify}
+      onSoundNotifyChange={setSoundNotify}
+    />
   );
 
   const searchPanelContent = (
@@ -1951,79 +1941,19 @@ export default function ChatPage() {
           onChange={onVideoOrAudioFileSelected}
         />
         <Flex vertical gap={16} className="chat-main-stack">
-          <Flex justify="space-between" align="center" gap={8} wrap="wrap" flex="none">
-            <Flex align="center" gap={10} style={{ flex: "1 1 160px", minWidth: 0 }}>
-              {selectedRoom?.type === "group" ? (
-                <Avatar
-                  size={40}
-                  src={
-                    selectedRoom.avatar?.trim()
-                      ? resolveMediaUrl(selectedRoom.avatar.trim(), API_BASE_URL)
-                      : undefined
-                  }
-                  className="chat-main-header-room-avatar"
-                >
-                  {(() => {
-                    const ch = currentRoomName.trim().charAt(0).toUpperCase() || "#";
-                    return ch === "#" ? <FiHash /> : ch;
-                  })()}
-                </Avatar>
-              ) : selectedRoom?.type === "direct" && directCounterpart ? (
-                <Avatar
-                  size={40}
-                  src={
-                    directCounterpart.avatar?.trim()
-                      ? resolveMediaUrl(directCounterpart.avatar.trim(), API_BASE_URL)
-                      : undefined
-                  }
-                  className="chat-main-header-room-avatar"
-                >
-                  {directCounterpart.username.charAt(0).toUpperCase()}
-                </Avatar>
-              ) : null}
-              <Flex vertical gap={0} style={{ flex: 1, minWidth: 0 }}>
-                <Title level={4} style={{ margin: 0 }} ellipsis>
-                  {currentRoomName}
-                </Title>
-                {selectedRoom?.type === "direct" && directCounterpart ? (
-                  <Text type="secondary" style={{ fontSize: 12 }} ellipsis>
-                    {directHeaderPresence}
-                  </Text>
-                ) : null}
-              </Flex>
-            </Flex>
-            <Space size={8} wrap className="chat-header-actions">
-              <Button
-                className="chat-header-icon-btn"
-                shape="circle"
-                icon={<FiSearch />}
-                aria-label={vi.chat.searchInThread}
-                disabled={!selectedRoomId}
-                onClick={() => {
-                  setThreadSearchOpen(true);
-                  setThreadSearchQuery("");
-                  setThreadSearchHits([]);
-                }}
-              />
-              <Button
-                className="chat-header-icon-btn"
-                shape="circle"
-                icon={<FiPhone />}
-              />
-              <Button
-                className="chat-header-icon-btn"
-                shape="circle"
-                icon={<FiCamera />}
-              />
-              <Button
-                className="chat-header-icon-btn"
-                shape="circle"
-                icon={<FiInfo />}
-                onClick={() => setIsRoomInfoOpen(true)}
-                disabled={!selectedRoom}
-              />
-            </Space>
-          </Flex>
+          <ChatThreadHeader
+            selectedRoom={selectedRoom}
+            currentRoomName={currentRoomName}
+            directCounterpart={directCounterpart}
+            directHeaderPresence={directHeaderPresence}
+            apiBaseUrl={API_BASE_URL}
+            onOpenThreadSearch={() => {
+              setThreadSearchOpen(true);
+              setThreadSearchQuery("");
+              setThreadSearchHits([]);
+            }}
+            onOpenRoomInfo={() => setIsRoomInfoOpen(true)}
+          />
 
           <Suspense
             fallback={

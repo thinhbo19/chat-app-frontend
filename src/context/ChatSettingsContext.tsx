@@ -10,9 +10,11 @@ import {
 const STORAGE_KEY = "chat_app_settings_v1";
 
 export type ChatTheme = "light" | "dark";
+export type ChatUiPreset = "modern" | "minimal" | "neon";
 
 export type ChatSettings = {
   theme: ChatTheme;
+  uiPreset: ChatUiPreset;
   desktopNotify: boolean;
   soundNotify: boolean;
   language: "vi";
@@ -20,6 +22,7 @@ export type ChatSettings = {
 
 const defaultSettings: ChatSettings = {
   theme: "light",
+  uiPreset: "modern",
   desktopNotify: false,
   soundNotify: true,
   language: "vi",
@@ -27,6 +30,7 @@ const defaultSettings: ChatSettings = {
 
 type ChatSettingsContextValue = ChatSettings & {
   setTheme: (t: ChatTheme) => void;
+  setUiPreset: (p: ChatUiPreset) => void;
   setDesktopNotify: (v: boolean) => void;
   setSoundNotify: (v: boolean) => void;
   requestNotificationPermission: () => Promise<NotificationPermission>;
@@ -55,10 +59,16 @@ export function ChatSettingsProvider({ children }: { children: React.ReactNode }
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
     document.documentElement.classList.toggle("theme-dark", settings.theme === "dark");
+    document.documentElement.classList.remove("ui-modern", "ui-minimal", "ui-neon");
+    document.documentElement.classList.add(`ui-${settings.uiPreset}`);
   }, [settings]);
 
   const setTheme = useCallback((theme: ChatTheme) => {
     setSettings((s) => ({ ...s, theme }));
+  }, []);
+
+  const setUiPreset = useCallback((uiPreset: ChatUiPreset) => {
+    setSettings((s) => ({ ...s, uiPreset }));
   }, []);
 
   const setDesktopNotify = useCallback((desktopNotify: boolean) => {
@@ -81,11 +91,12 @@ export function ChatSettingsProvider({ children }: { children: React.ReactNode }
     () => ({
       ...settings,
       setTheme,
+      setUiPreset,
       setDesktopNotify,
       setSoundNotify,
       requestNotificationPermission,
     }),
-    [settings, setTheme, setDesktopNotify, setSoundNotify, requestNotificationPermission],
+    [settings, setTheme, setUiPreset, setDesktopNotify, setSoundNotify, requestNotificationPermission],
   );
 
   return (

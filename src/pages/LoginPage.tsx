@@ -60,8 +60,8 @@ export default function LoginPage() {
 
   return (
     <AuthPageLayout>
-      <div className="animate-auth-card-in relative z-10 w-full max-w-[420px]">
-        <div className="rounded-[1.35rem] border border-white/60 bg-white/70 p-8 shadow-2xl shadow-indigo-900/15 ring-1 ring-indigo-100/90 backdrop-blur-xl sm:p-9">
+      <div className="animate-auth-card-in relative z-10 w-full max-w-[440px]">
+        <div className="rounded-[1.5rem] border border-white/65 bg-white/78 p-8 shadow-2xl shadow-indigo-900/15 ring-1 ring-indigo-100/90 backdrop-blur-xl sm:p-9">
           <header className="mb-8 text-center">
             <div
               className="animate-auth-float mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-violet-500 to-cyan-500 text-3xl text-white shadow-lg shadow-indigo-500/35 ring-1 ring-white/40"
@@ -74,6 +74,7 @@ export default function LoginPage() {
             </h1>
             <p className="mt-1.5 text-sm text-slate-500">{vi.login.saasTagline}</p>
             <h2 className="mt-6 text-lg font-semibold text-slate-800">{vi.login.title}</h2>
+            <p className="mt-1 text-xs text-slate-500">Nhanh, mượt, an toàn cho mọi cuộc trò chuyện.</p>
           </header>
 
           <form onSubmit={(e) => void handleSubmit(e)} className="space-y-5">
