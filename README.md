@@ -24,3 +24,12 @@ Trên Netlify → **Environment variables**:
 ## Git
 
 Đây là **một repo Git độc lập** (chỉ frontend). Không còn monorepo chung với backend.
+
+## Changelog (recent)
+
+- Added ESLint + Vitest scripts and CI checks (lint, test, build).
+- Added token refresh handling update to persist rotated refresh tokens.
+- Refactored chat screen by extracting socket connection/events hooks.
+- Added smarter auto-refresh policy (visibility-aware, slower fallback polling).
+- Added reconnect error toast throttling to reduce notification spam.
+- Added focused unit tests for chat auto-refresh and socket error throttling helpers.

@@ -46,8 +46,6 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { AvatarWithStatus } from "../components/AvatarWithStatus";
-import { PersonalProfileModal } from "../components/profile/PersonalProfileModal";
-import { ChatSettingsPanel } from "../components/chat/ChatSettingsPanel";
 import { ChatThreadHeader } from "../components/chat/ChatThreadHeader";
 
 const ChatSidebarBody = lazy(() =>
@@ -56,25 +54,67 @@ const ChatSidebarBody = lazy(() =>
 const ChatMessageList = lazy(() =>
   import("../components/chat/ChatMessageList").then((m) => ({ default: m.ChatMessageList })),
 );
+const ChatSettingsPanel = lazy(() =>
+  import("../components/chat/ChatSettingsPanel").then((m) => ({ default: m.ChatSettingsPanel })),
+);
+const PersonalProfileModal = lazy(() =>
+  import("../components/profile/PersonalProfileModal").then((m) => ({
+    default: m.PersonalProfileModal,
+  })),
+);
 import { useChatSettings } from "../context/ChatSettingsContext";
 import { getApiErrorMessage } from "../utils/apiError";
 import { formatChatHeaderPresence } from "../utils/formatPresence";
 import { unlockMessageAudio } from "../utils/messageSound";
 import { vi } from "../strings/vi";
-import { isValidFriendUser } from "../utils/friendUser";
 import { resolveMediaUrl } from "../utils/mediaUrl";
 import { isRoomMemberPopulated } from "../utils/roomMember";
 import { useChatAutoRefresh } from "../hooks/useChatAutoRefresh";
+import { useChatComposerActions } from "../hooks/useChatComposerActions";
+import { useChatDiscoveryActions } from "../hooks/useChatDiscoveryActions";
+import { useChatDomainActions } from "../hooks/useChatDomainActions";
+import { useChatPageLifecycle } from "../hooks/useChatPageLifecycle";
 import { useChatSocketConnection } from "../hooks/useChatSocketConnection";
 import { useChatSocketEvents } from "../hooks/useChatSocketEvents";
+import { useChatThreadActions } from "../hooks/useChatThreadActions";
+import { useAppDispatch, useAppSelector } from "../store/hooks";
+import {
+  setChatThreadLoading as setChatThreadLoadingAction,
+  setMessages as setMessagesAction,
+  setMessagesHasMore as setMessagesHasMoreAction,
+  setReadStates as setReadStatesAction,
+  setRooms as setRoomsAction,
+  setSelectedRoomId as setSelectedRoomIdAction,
+  setFriends as setFriendsAction,
+  setGroupInvites as setGroupInvitesAction,
+  setThreadSearchHits as setThreadSearchHitsAction,
+  setThreadSearchLoading as setThreadSearchLoadingAction,
+  setThreadSearchOpen as setThreadSearchOpenAction,
+  setThreadSearchQuery as setThreadSearchQueryAction,
+  setUnreadByRoomId as setUnreadByRoomIdAction,
+} from "../store/chatSlice";
+import {
+  selectCanPinMessagesInThread,
+  selectFriendsSafe,
+  selectMyRoomRole,
+  selectRoomPref,
+  selectSelectedRoom,
+  selectSortedGroupRooms,
+  selectUnreadByFriendId,
+  selectVisibleDiscoveryResults,
+} from "../store/chatSelectors";
+import {
+  fetchFriends,
+  fetchIncomingRequests,
+  fetchOutgoingRequests,
+  fetchPendingGroupInvites,
+  fetchRoomsAndUnread,
+} from "../store/chatThunks";
 import type {
   AuthUser,
   ChatMessage,
-  ChatMessageContentType,
-  FriendRequest,
   FriendUser,
   GroupInvite,
-  OutgoingFriendRequest,
   Room,
   RoomReadStateEntry,
 } from "../types";
@@ -98,6 +138,7 @@ function getRoomDisplayName(room: Room, myUserId: string) {
 }
 
 export default function ChatPage() {
+  const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const { user, logout, updateCurrentUser, loadProfile } = useAuth();
   const {
@@ -118,16 +159,16 @@ export default function ChatPage() {
   const [isRoomInfoOpen, setIsRoomInfoOpen] = useState(false);
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [addingMemberId, setAddingMemberId] = useState("");
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [selectedRoomId, setSelectedRoomId] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const rooms = useAppSelector((state) => state.chat.rooms);
+  const selectedRoomId = useAppSelector((state) => state.chat.selectedRoomId);
+  const messages = useAppSelector((state) => state.chat.messages);
   const composeRef = useRef<ChatComposeRowHandle>(null);
   const [roomName, setRoomName] = useState("");
 
-  const [friends, setFriends] = useState<FriendUser[]>([]);
-  const [incomingRequests, setIncomingRequests] = useState<FriendRequest[]>([]);
-  const [outgoingRequests, setOutgoingRequests] = useState<OutgoingFriendRequest[]>([]);
-  const [groupInvites, setGroupInvites] = useState<GroupInvite[]>([]);
+  const friends = useAppSelector((state) => state.chat.friends);
+  const incomingRequests = useAppSelector((state) => state.chat.incomingRequests);
+  const outgoingRequests = useAppSelector((state) => state.chat.outgoingRequests);
+  const groupInvites = useAppSelector((state) => state.chat.groupInvites);
   const [groupInviteActionId, setGroupInviteActionId] = useState("");
   const [searchText, setSearchText] = useState("");
   const [discoveryList, setDiscoveryList] = useState<FriendUser[]>([]);
@@ -155,10 +196,10 @@ export default function ChatPage() {
   const [isNarrowLayout, setIsNarrowLayout] = useState(false);
   /** Mobile (narrow): single left drawer = sidebar + cài đặt/tìm kiếm. Desktop: chỉ dùng cho drawer phụ. */
   const [mobileLeftOpen, setMobileLeftOpen] = useState(false);
-  const [readStates, setReadStates] = useState<RoomReadStateEntry[]>([]);
-  const [messagesHasMore, setMessagesHasMore] = useState(false);
+  const readStates = useAppSelector((state) => state.chat.readStates);
+  const messagesHasMore = useAppSelector((state) => state.chat.messagesHasMore);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [chatThreadLoading, setChatThreadLoading] = useState(false);
+  const chatThreadLoading = useAppSelector((state) => state.chat.chatThreadLoading);
   const [groupAvatarSaving, setGroupAvatarSaving] = useState(false);
   const groupAvatarFileInputRef = useRef<HTMLInputElement>(null);
   const [removingMemberId, setRemovingMemberId] = useState("");
@@ -172,12 +213,12 @@ export default function ChatPage() {
     desktopNotify: false,
   });
   const markReadTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
-  const [unreadByRoomId, setUnreadByRoomId] = useState<Record<string, number>>({});
+  const unreadByRoomId = useAppSelector((state) => state.chat.unreadByRoomId);
   const [presenceClock, setPresenceClock] = useState(0);
-  const [threadSearchOpen, setThreadSearchOpen] = useState(false);
-  const [threadSearchQuery, setThreadSearchQuery] = useState("");
-  const [threadSearchLoading, setThreadSearchLoading] = useState(false);
-  const [threadSearchHits, setThreadSearchHits] = useState<ChatMessage[]>([]);
+  const threadSearchOpen = useAppSelector((state) => state.chat.threadSearch.open);
+  const threadSearchQuery = useAppSelector((state) => state.chat.threadSearch.query);
+  const threadSearchLoading = useAppSelector((state) => state.chat.threadSearch.loading);
+  const threadSearchHits = useAppSelector((state) => state.chat.threadSearch.hits);
   const [pendingScrollMessageId, setPendingScrollMessageId] = useState<string | null>(null);
   const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
 
@@ -198,6 +239,138 @@ export default function ChatPage() {
   useEffect(() => {
     selectedRoomIdRef.current = selectedRoomId;
   }, [selectedRoomId]);
+
+  const setRooms = useCallback(
+    (next: Room[] | ((prev: Room[]) => Room[])) => {
+      const value = typeof next === "function" ? (next as (prev: Room[]) => Room[])(rooms) : next;
+      dispatch(setRoomsAction(value));
+    },
+    [dispatch, rooms],
+  );
+
+  const setSelectedRoomId = useCallback(
+    (next: string | ((prev: string) => string)) => {
+      const value =
+        typeof next === "function" ? (next as (prev: string) => string)(selectedRoomId) : next;
+      dispatch(setSelectedRoomIdAction(value));
+    },
+    [dispatch, selectedRoomId],
+  );
+
+  const setMessages = useCallback(
+    (next: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
+      const value =
+        typeof next === "function"
+          ? (next as (prev: ChatMessage[]) => ChatMessage[])(messages)
+          : next;
+      dispatch(setMessagesAction(value));
+    },
+    [dispatch, messages],
+  );
+
+  const setReadStates = useCallback(
+    (next: RoomReadStateEntry[] | ((prev: RoomReadStateEntry[]) => RoomReadStateEntry[])) => {
+      const value =
+        typeof next === "function"
+          ? (next as (prev: RoomReadStateEntry[]) => RoomReadStateEntry[])(readStates)
+          : next;
+      dispatch(setReadStatesAction(value));
+    },
+    [dispatch, readStates],
+  );
+
+  const setMessagesHasMore = useCallback(
+    (next: boolean | ((prev: boolean) => boolean)) => {
+      const value =
+        typeof next === "function" ? (next as (prev: boolean) => boolean)(messagesHasMore) : next;
+      dispatch(setMessagesHasMoreAction(value));
+    },
+    [dispatch, messagesHasMore],
+  );
+
+  const setChatThreadLoading = useCallback(
+    (next: boolean | ((prev: boolean) => boolean)) => {
+      const value =
+        typeof next === "function" ? (next as (prev: boolean) => boolean)(chatThreadLoading) : next;
+      dispatch(setChatThreadLoadingAction(value));
+    },
+    [dispatch, chatThreadLoading],
+  );
+
+  const setUnreadByRoomId = useCallback(
+    (
+      next:
+        | Record<string, number>
+        | ((prev: Record<string, number>) => Record<string, number>),
+    ) => {
+      const value =
+        typeof next === "function"
+          ? (next as (prev: Record<string, number>) => Record<string, number>)(unreadByRoomId)
+          : next;
+      dispatch(setUnreadByRoomIdAction(value));
+    },
+    [dispatch, unreadByRoomId],
+  );
+
+  const setFriends = useCallback(
+    (next: FriendUser[] | ((prev: FriendUser[]) => FriendUser[])) => {
+      const value =
+        typeof next === "function" ? (next as (prev: FriendUser[]) => FriendUser[])(friends) : next;
+      dispatch(setFriendsAction(value));
+    },
+    [dispatch, friends],
+  );
+
+  const setGroupInvites = useCallback(
+    (next: GroupInvite[] | ((prev: GroupInvite[]) => GroupInvite[])) => {
+      const value =
+        typeof next === "function"
+          ? (next as (prev: GroupInvite[]) => GroupInvite[])(groupInvites)
+          : next;
+      dispatch(setGroupInvitesAction(value));
+    },
+    [dispatch, groupInvites],
+  );
+
+  const setThreadSearchOpen = useCallback(
+    (next: boolean | ((prev: boolean) => boolean)) => {
+      const value =
+        typeof next === "function" ? (next as (prev: boolean) => boolean)(threadSearchOpen) : next;
+      dispatch(setThreadSearchOpenAction(value));
+    },
+    [dispatch, threadSearchOpen],
+  );
+
+  const setThreadSearchQuery = useCallback(
+    (next: string | ((prev: string) => string)) => {
+      const value =
+        typeof next === "function" ? (next as (prev: string) => string)(threadSearchQuery) : next;
+      dispatch(setThreadSearchQueryAction(value));
+    },
+    [dispatch, threadSearchQuery],
+  );
+
+  const setThreadSearchLoading = useCallback(
+    (next: boolean | ((prev: boolean) => boolean)) => {
+      const value =
+        typeof next === "function"
+          ? (next as (prev: boolean) => boolean)(threadSearchLoading)
+          : next;
+      dispatch(setThreadSearchLoadingAction(value));
+    },
+    [dispatch, threadSearchLoading],
+  );
+
+  const setThreadSearchHits = useCallback(
+    (next: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
+      const value =
+        typeof next === "function"
+          ? (next as (prev: ChatMessage[]) => ChatMessage[])(threadSearchHits)
+          : next;
+      dispatch(setThreadSearchHitsAction(value));
+    },
+    [dispatch, threadSearchHits],
+  );
 
   useEffect(() => {
     setHighlightMessageId(null);
@@ -235,35 +408,12 @@ export default function ChatPage() {
   }, [isNarrowLayout]);
 
   const loadRooms = useCallback(async () => {
-    const response = await api.get("/api/rooms/my");
-    const list = response.data.rooms as Room[];
-    let nextSelectedId = selectedRoomId;
-    if (!nextSelectedId && list.length > 0) {
-      const firstGroup = list.find((r) => r.type === "group");
-      if (firstGroup) {
-        nextSelectedId = firstGroup._id;
-        setSelectedRoomId(firstGroup._id);
-      }
-    }
-    setRooms(list);
-    try {
-      const ur = await api.get<{ counts: Record<string, number> }>("/api/rooms/unread-summary");
-      const counts = ur.data.counts || {};
-      setUnreadByRoomId((prev) => {
-        const next = { ...prev, ...counts };
-        if (nextSelectedId) next[nextSelectedId] = 0;
-        return next;
-      });
-    } catch {
-      /* ignore */
-    }
-  }, [selectedRoomId]);
+    await dispatch(fetchRoomsAndUnread()).unwrap();
+  }, [dispatch]);
 
   const loadFriends = useCallback(async () => {
-    const response = await api.get("/api/friends/list");
-    const raw = response.data.friends as FriendUser[];
-    setFriends(Array.isArray(raw) ? raw.filter(isValidFriendUser) : []);
-  }, []);
+    await dispatch(fetchFriends()).unwrap();
+  }, [dispatch]);
 
   const handleProfileUserUpdated = useCallback(
     (u: AuthUser) => {
@@ -275,46 +425,21 @@ export default function ChatPage() {
   );
 
   const loadIncomingRequests = useCallback(async () => {
-    const response = await api.get("/api/friends/requests/incoming");
-    const raw = response.data.requests as FriendRequest[];
-    const list = Array.isArray(raw) ? raw : [];
-    const uid = user?._id ? String(user._id) : "";
-    setIncomingRequests(
-      uid ? list.filter((r) => r && String(r.toUserId) === uid) : [],
-    );
-  }, [user?._id]);
+    await dispatch(fetchIncomingRequests()).unwrap();
+  }, [dispatch]);
 
   const loadOutgoingRequests = useCallback(async () => {
-    const response = await api.get("/api/friends/requests/outgoing");
-    const raw = response.data.requests as OutgoingFriendRequest[];
-    const list = Array.isArray(raw) ? raw : [];
-    const uid = user?._id ? String(user._id) : "";
-    setOutgoingRequests(
-      uid ? list.filter((r) => r && String(r.fromUserId) === uid) : [],
-    );
-  }, [user?._id]);
+    await dispatch(fetchOutgoingRequests()).unwrap();
+  }, [dispatch]);
 
   const loadPendingGroupInvites = useCallback(async () => {
     try {
-      const { data } = await api.get<{ invites: GroupInvite[] }>(
-        "/api/rooms/group-invites/pending",
-      );
-      const list = Array.isArray(data.invites) ? data.invites : [];
-      setGroupInvites(
-        list.filter(
-          (inv) =>
-            inv &&
-            inv._id &&
-            inv.roomId &&
-            inv.invitedByUserId &&
-            isValidFriendUser(inv.invitedByUserId),
-        ),
-      );
+      await dispatch(fetchPendingGroupInvites()).unwrap();
     } catch {
       message.error(vi.errors.loadGroupInvites);
       setGroupInvites([]);
     }
-  }, []);
+  }, [dispatch, setGroupInvites]);
 
   useEffect(() => {
     discoveryModeRef.current = discoveryMode;
@@ -324,135 +449,24 @@ export default function ChatPage() {
     browseNextCursorRef.current = browseNextCursor;
   }, [browseNextCursor]);
 
-  const fetchBrowse = useCallback(async (after?: string | null) => {
-    const params: Record<string, string | number> = { limit: BROWSE_PAGE_SIZE };
-    if (after) params.after = after;
-    const { data } = await api.get<{ users: FriendUser[]; nextCursor: string | null }>(
-      "/api/users/browse",
-      { params },
-    );
-    return data;
-  }, []);
-
-  const loadBrowseFirstPage = useCallback(async () => {
-    setDiscoveryMode("browse");
-    setBrowseNextCursor(null);
-    browseNextCursorRef.current = null;
-    setBrowseLoading(true);
-    try {
-      const data = await fetchBrowse();
-      setDiscoveryList(data.users);
-      setBrowseNextCursor(data.nextCursor);
-    } catch {
-      message.error(vi.errors.loadUserBrowse);
-      setDiscoveryList([]);
-    } finally {
-      setBrowseLoading(false);
-    }
-  }, [fetchBrowse]);
-
-  const loadBrowseMore = useCallback(async () => {
-    if (discoveryModeRef.current !== "browse") return;
-    const after = browseNextCursorRef.current;
-    if (after == null || browseMoreLockRef.current) return;
-    browseMoreLockRef.current = true;
-    setBrowseLoadingMore(true);
-    try {
-      const data = await fetchBrowse(after);
-      setDiscoveryList((prev) => {
-        const seen = new Set(prev.map((u) => u._id));
-        const extra = data.users.filter((u) => !seen.has(u._id));
-        return [...prev, ...extra];
-      });
-      setBrowseNextCursor(data.nextCursor);
-    } catch {
-      message.error(vi.errors.loadUserBrowse);
-    } finally {
-      setBrowseLoadingMore(false);
-      browseMoreLockRef.current = false;
-    }
-  }, [fetchBrowse]);
+  const { loadBrowseFirstPage, loadBrowseMore, searchUsers } = useChatDiscoveryActions({
+    browsePageSize: BROWSE_PAGE_SIZE,
+    searchText,
+    setDiscoveryMode,
+    setBrowseNextCursor,
+    browseNextCursorRef,
+    discoveryModeRef,
+    browseMoreLockRef,
+    setBrowseLoading,
+    setBrowseLoadingMore,
+    setDiscoveryList,
+  });
 
   useEffect(() => {
     if (railPanel !== "search") return;
     setSearchText("");
     void loadBrowseFirstPage();
   }, [railPanel, loadBrowseFirstPage]);
-
-  const loadOlderMessages = useCallback(
-    async (beforeId: string) => {
-      if (!selectedRoomId || !messagesHasMore || loadingOlder) return;
-      const wrap = messagesScrollRef.current;
-      const prevScrollHeight = wrap?.scrollHeight ?? 0;
-      setLoadingOlder(true);
-      try {
-        const r = await api.get(`/api/rooms/${selectedRoomId}/messages`, {
-          params: { before: beforeId, limit: 50 },
-        });
-        const older = r.data.messages as ChatMessage[];
-        setMessages((m) => {
-          const ids = new Set(m.map((x) => x.id));
-          const prep = older.filter((x) => !ids.has(x.id));
-          return [...prep, ...m];
-        });
-        setMessagesHasMore(r.data.hasMore);
-        requestAnimationFrame(() => {
-          const el = messagesScrollRef.current;
-          if (el) el.scrollTop = el.scrollHeight - prevScrollHeight;
-        });
-      } catch {
-        message.error(vi.errors.loadOlder);
-      } finally {
-        setLoadingOlder(false);
-      }
-    },
-    [selectedRoomId, messagesHasMore, loadingOlder],
-  );
-
-  useEffect(() => {
-    if (!pendingScrollMessageId || !selectedRoomId) return;
-    const found = messages.some((m) => m.id === pendingScrollMessageId);
-    if (found) {
-      setHighlightMessageId(pendingScrollMessageId);
-      setPendingScrollMessageId(null);
-      setThreadSearchOpen(false);
-      return;
-    }
-    if (loadingOlder) return;
-    if (!messagesHasMore) {
-      message.info(vi.chat.scrollToMessageFail);
-      setPendingScrollMessageId(null);
-      return;
-    }
-    const first = messages[0];
-    if (!first) {
-      message.info(vi.chat.scrollToMessageFail);
-      setPendingScrollMessageId(null);
-      return;
-    }
-    void loadOlderMessages(first.id);
-  }, [
-    pendingScrollMessageId,
-    messages,
-    messagesHasMore,
-    loadingOlder,
-    selectedRoomId,
-    loadOlderMessages,
-  ]);
-
-  useEffect(() => {
-    loadRooms().catch(() => message.error(vi.errors.loadRooms));
-    loadFriends().catch(() => message.error(vi.errors.loadFriends));
-    loadIncomingRequests().catch(() => message.error(vi.errors.loadIncoming));
-    loadOutgoingRequests().catch(() => message.error(vi.errors.loadOutgoing));
-    loadPendingGroupInvites().catch(() => null);
-  }, [
-    loadFriends,
-    loadIncomingRequests,
-    loadOutgoingRequests,
-    loadPendingGroupInvites,
-    loadRooms,
-  ]);
 
   useChatSocketEvents({
     socket,
@@ -480,436 +494,64 @@ export default function ChatPage() {
     loadOutgoingRequests,
     loadPendingGroupInvites,
     loadRooms,
+    isSocketConnected: Boolean(socket?.connected),
   });
 
-  useEffect(() => {
-    if (!selectedRoomId) {
-      setMessages([]);
-      setReadStates([]);
-      setMessagesHasMore(false);
-      setChatThreadLoading(false);
-      return;
-    }
+  useChatPageLifecycle({
+    dispatch,
+    socket,
+    socketRef,
+    selectedRoomId,
+    messages,
+    composeRef,
+    markReadTimerRef,
+    endOfMessagesRef,
+    setMessages,
+    setReadStates,
+    setMessagesHasMore,
+    setChatThreadLoading,
+    setUnreadByRoomId,
+    setPendingImage,
+    loadRooms,
+    loadFriends,
+    loadIncomingRequests,
+    loadOutgoingRequests,
+    loadPendingGroupInvites,
+  });
 
-    setChatThreadLoading(true);
-    setMessages([]);
-
-    let cancelled = false;
-    void (async () => {
-      try {
-        const [msgRes, readRes] = await Promise.all([
-          api.get(`/api/rooms/${selectedRoomId}/messages`, { params: { limit: 50 } }),
-          api.get(`/api/rooms/${selectedRoomId}/read-state`),
-        ]);
-        if (cancelled) return;
-        setMessages(msgRes.data.messages);
-        setMessagesHasMore(Boolean(msgRes.data.hasMore));
-        setReadStates(readRes.data.states);
-        setUnreadByRoomId((prev) => ({ ...prev, [selectedRoomId]: 0 }));
-      } catch {
-        if (!cancelled) message.error(vi.errors.loadHistory);
-      } finally {
-        if (!cancelled) setChatThreadLoading(false);
-      }
-    })();
-
-    if (socket) {
-      if (!socket.connected) {
-        socket.connect();
-      }
-      socket.emit(
-        "join_room",
-        { roomId: selectedRoomId },
-        (response: { ok: boolean; error?: string }) => {
-          if (!response?.ok && !cancelled) {
-            message.error(response?.error || vi.errors.joinRoom);
-          }
-        },
-      );
-    }
-
-    return () => {
-      cancelled = true;
-    };
-  }, [socket, selectedRoomId]);
-
-  const lastMessageId = messages[messages.length - 1]?.id;
-  useEffect(() => {
-    endOfMessagesRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [lastMessageId]);
-
-  useEffect(() => {
-    if (!selectedRoomId || messages.length === 0) return;
-    const last = messages[messages.length - 1];
-    if (markReadTimerRef.current) window.clearTimeout(markReadTimerRef.current);
-    markReadTimerRef.current = window.setTimeout(() => {
-      const roomId = selectedRoomId;
-      const messageId = last.id;
-      const s = socketRef.current;
-      if (s?.connected) {
-        s.emit(
-          "mark_room_read",
-          { roomId, messageId },
-          (res: { ok?: boolean }) => {
-            if (!res?.ok) {
-              api.post(`/api/rooms/${roomId}/read`, { messageId }).catch(() => null);
-            }
-          },
-        );
-      } else {
-        api.post(`/api/rooms/${roomId}/read`, { messageId }).catch(() => null);
-      }
-    }, 500);
-    return () => {
-      if (markReadTimerRef.current) window.clearTimeout(markReadTimerRef.current);
-    };
-  }, [selectedRoomId, messages]);
-
-  useEffect(() => {
-    composeRef.current?.clear();
-    setPendingImage((prev) => {
-      if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
-      return null;
+  const { clearPendingImage, onImageFileSelected, onVideoOrAudioFileSelected, submitComposer } =
+    useChatComposerActions({
+      dispatch,
+      selectedRoomId,
+      socket,
+      composeRef,
+      uploadMaxBytes: UPLOAD_MAX_BYTES,
+      uploadMaxMb: UPLOAD_MAX_MB,
+      pendingImage,
+      setPendingImage,
+      setUploadingMedia,
+      setUploadProgress,
     });
-  }, [selectedRoomId]);
 
-  function clearPendingImage() {
-    setPendingImage((prev) => {
-      if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
-      return null;
-    });
-  }
+  const { loadOlderMessages, runThreadSearch } = useChatThreadActions({
+    dispatch,
+    selectedRoomId,
+    messages,
+    messagesHasMore,
+    loadingOlder,
+    messagesScrollRef,
+    pendingScrollMessageId,
+    setPendingScrollMessageId,
+    setHighlightMessageId,
+    setThreadSearchOpen,
+    threadSearchQuery,
+    setThreadSearchHits,
+    setThreadSearchLoading,
+    setMessages,
+    setMessagesHasMore,
+    setLoadingOlder,
+  });
 
-  async function recallMessage(messageId: string) {
-    if (!selectedRoomId) return;
-    try {
-      await api.delete(`/api/rooms/${selectedRoomId}/messages/${messageId}`);
-    } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, vi.errors.recall));
-    }
-  }
-
-  async function toggleMessageReaction(messageId: string, emoji: string) {
-    if (!selectedRoomId) return;
-    try {
-      const { data } = await api.post<{ message: ChatMessage }>(
-        `/api/rooms/${selectedRoomId}/messages/${messageId}/reaction`,
-        { emoji },
-      );
-      if (data?.message) {
-        setMessages((prev) => prev.map((m) => (m.id === messageId ? data.message : m)));
-      }
-    } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, vi.errors.reactionFail));
-    }
-  }
-
-  async function pinThreadMessage(messageId: string) {
-    if (!selectedRoomId) return;
-    try {
-      const { data } = await api.post<{ room: Room; pinnedMessageIds: string[] }>(
-        `/api/rooms/${selectedRoomId}/pins`,
-        { messageId },
-      );
-      message.success(vi.chat.pinOk);
-      if (data?.room) {
-        setRooms((prev) =>
-          prev.map((r) => (r._id === selectedRoomId ? { ...(data.room as Room) } : r)),
-        );
-      }
-    } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, vi.errors.pinMessageFail));
-    }
-  }
-
-  async function unpinThreadMessage(messageId: string) {
-    if (!selectedRoomId) return;
-    try {
-      const { data } = await api.delete<{ room: Room; pinnedMessageIds: string[] }>(
-        `/api/rooms/${selectedRoomId}/pins/${messageId}`,
-      );
-      message.success(vi.chat.unpinOk);
-      if (data?.room) {
-        setRooms((prev) =>
-          prev.map((r) => (r._id === selectedRoomId ? { ...(data.room as Room) } : r)),
-        );
-      }
-    } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, vi.errors.unpinMessageFail));
-    }
-  }
-
-  async function patchRoomPrefs(partial: { muted?: boolean; sidebarPinned?: boolean }) {
-    if (!selectedRoom?._id) return;
-    try {
-      const { data } = await api.patch<{ user: AuthUser }>(`/api/users/me/room-prefs`, {
-        roomId: selectedRoom._id,
-        ...partial,
-      });
-      updateCurrentUser(data.user);
-      if (partial.muted !== undefined) {
-        message.success(vi.chat.muteOk);
-      } else if (partial.sidebarPinned !== undefined) {
-        message.success(vi.chat.pinRoomTopOk);
-      }
-    } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, vi.errors.roomPrefsFail));
-    }
-  }
-
-  async function runThreadSearch() {
-    const q = threadSearchQuery.trim();
-    if (!selectedRoomId || !q) {
-      setThreadSearchHits([]);
-      return;
-    }
-    setThreadSearchLoading(true);
-    try {
-      const { data } = await api.get<{ messages: ChatMessage[] }>(
-        `/api/rooms/${selectedRoomId}/messages/search`,
-        { params: { q, limit: 40 } },
-      );
-      setThreadSearchHits(Array.isArray(data.messages) ? data.messages : []);
-    } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, vi.errors.searchThreadFail));
-      setThreadSearchHits([]);
-    } finally {
-      setThreadSearchLoading(false);
-    }
-  }
-
-  async function createRoom() {
-    const trimmed = roomName.trim();
-    if (!trimmed) return;
-    try {
-      await api.post("/api/rooms", { name: trimmed });
-      setRoomName("");
-      await loadRooms();
-      message.success(vi.errors.createRoomOk);
-    } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, vi.errors.createRoomFail));
-    }
-  }
-
-  async function submitComposer() {
-    if (!selectedRoomId || !socket) return;
-
-    if (pendingImage) {
-      if (pendingImage.file.size > UPLOAD_MAX_BYTES) {
-        message.error(vi.errors.uploadTooLarge(UPLOAD_MAX_MB));
-        return;
-      }
-      const formData = new FormData();
-      formData.append("file", pendingImage.file);
-      setUploadingMedia(true);
-      setUploadProgress(0);
-      try {
-        const response = await api.post<{ mediaUrl: string; contentType: ChatMessageContentType }>(
-          "/api/messages/upload",
-          formData,
-          {
-            onUploadProgress: (ev) => {
-              if (!ev.total) return;
-              setUploadProgress(Math.round((ev.loaded / ev.total) * 100));
-            },
-          },
-        );
-        const caption = composeRef.current?.getText().trim() ?? "";
-        socket.emit(
-          "send_message",
-          {
-            roomId: selectedRoomId,
-            contentType: response.data.contentType,
-            mediaUrl: response.data.mediaUrl,
-            text: caption,
-          },
-          (res: { ok: boolean; error?: string }) => {
-            if (!res?.ok) {
-              message.error(res?.error || vi.errors.sendImageFail);
-              return;
-            }
-            composeRef.current?.clear();
-            clearPendingImage();
-          },
-        );
-      } catch (error: unknown) {
-        message.error(getApiErrorMessage(error, vi.errors.uploadImageFail));
-      } finally {
-        setUploadingMedia(false);
-        setUploadProgress(null);
-      }
-      return;
-    }
-
-    const trimmed = composeRef.current?.getText().trim() ?? "";
-    if (!trimmed) {
-      message.warning(vi.errors.needTextOrMedia);
-      return;
-    }
-
-    socket.emit(
-      "send_message",
-      { roomId: selectedRoomId, contentType: "text" as const, text: trimmed, mediaUrl: "" },
-      (response: { ok: boolean; error?: string }) => {
-        if (!response?.ok) {
-          message.error(response?.error || vi.errors.sendTextFail);
-          return;
-        }
-        composeRef.current?.clear();
-      },
-    );
-  }
-
-  async function uploadAndEmitMedia(file: File) {
-    if (!selectedRoomId || !socket) {
-      message.warning(vi.errors.pickRoom);
-      return;
-    }
-    if (file.size > UPLOAD_MAX_BYTES) {
-      message.error(vi.errors.uploadTooLarge(UPLOAD_MAX_MB));
-      return;
-    }
-    const formData = new FormData();
-    formData.append("file", file);
-    setUploadingMedia(true);
-    setUploadProgress(0);
-    try {
-      const response = await api.post<{ mediaUrl: string; contentType: ChatMessageContentType }>(
-        "/api/messages/upload",
-        formData,
-        {
-          onUploadProgress: (ev) => {
-            if (!ev.total) return;
-            setUploadProgress(Math.round((ev.loaded / ev.total) * 100));
-          },
-        },
-      );
-      const caption = composeRef.current?.getText().trim() ?? "";
-      socket.emit(
-        "send_message",
-        {
-          roomId: selectedRoomId,
-          contentType: response.data.contentType,
-          mediaUrl: response.data.mediaUrl,
-          text: caption,
-        },
-        (res: { ok: boolean; error?: string }) => {
-          if (!res?.ok) {
-            message.error(res?.error || vi.errors.sendFileFail);
-            return;
-          }
-          composeRef.current?.clear();
-        },
-      );
-    } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, vi.errors.uploadFileFail));
-    } finally {
-      setUploadingMedia(false);
-      setUploadProgress(null);
-    }
-  }
-
-  function onImageFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      message.warning(vi.errors.pickImageFile);
-      return;
-    }
-    if (file.size > UPLOAD_MAX_BYTES) {
-      message.error(vi.errors.uploadTooLarge(UPLOAD_MAX_MB));
-      return;
-    }
-    setPendingImage((prev) => {
-      if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
-      return { file, previewUrl: URL.createObjectURL(file) };
-    });
-  }
-
-  function onVideoOrAudioFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    if (file.size > UPLOAD_MAX_BYTES) {
-      message.error(vi.errors.uploadTooLarge(UPLOAD_MAX_MB));
-      return;
-    }
-    void uploadAndEmitMedia(file);
-  }
-
-  async function searchUsers() {
-    const q = searchText.trim();
-    if (!q) {
-      await loadBrowseFirstPage();
-      return;
-    }
-    setDiscoveryMode("search");
-    setBrowseNextCursor(null);
-    browseNextCursorRef.current = null;
-    setBrowseLoading(true);
-    try {
-      const response = await api.get("/api/users/search", {
-        params: { q },
-      });
-      setDiscoveryList(response.data.users);
-    } catch (_error) {
-      message.error(vi.errors.userNotFound);
-      setDiscoveryList([]);
-    } finally {
-      setBrowseLoading(false);
-    }
-  }
-
-  async function sendFriendRequest(toUserId: string) {
-    try {
-      await api.post("/api/friends/request", { toUserId });
-      message.success(vi.errors.inviteSent);
-      setDiscoveryList((prev) => prev.filter((item) => item._id !== toUserId));
-      await loadIncomingRequests();
-      await loadFriends();
-      await loadOutgoingRequests();
-    } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, vi.errors.inviteFail));
-    }
-  }
-
-  async function handleRequest(requestId: string, action: "accept" | "reject") {
-    try {
-      await api.post(`/api/friends/request/${requestId}/${action}`);
-      message.success(action === "accept" ? vi.errors.accepted : vi.errors.rejected);
-      await loadIncomingRequests();
-      await loadFriends();
-    } catch (_error) {
-      message.error(vi.errors.requestUpdateFail);
-    }
-  }
-
-  async function removeFriend(friendUserId: string) {
-    try {
-      await api.delete(`/api/friends/${friendUserId}`);
-      message.success(vi.errors.unfriendOk);
-      await loadFriends();
-    } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, vi.errors.unfriendFail));
-    }
-  }
-
-  async function openDirectRoom(friendUserId: string) {
-    setChatThreadLoading(true);
-    try {
-      const response = await api.post(`/api/rooms/direct/${friendUserId}`);
-      const room = response.data.room as Room;
-      await loadRooms();
-      setSelectedRoomId(room._id);
-      if (isNarrowLayout) {
-        setMobileLeftOpen(false);
-      }
-    } catch (error: unknown) {
-      setChatThreadLoading(false);
-      message.error(getApiErrorMessage(error, vi.errors.openDirectFail));
-    }
-  }
 
   async function onGroupAvatarFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -945,65 +587,57 @@ export default function ChatPage() {
     }
   }
 
-  async function patchMemberRole(memberUserId: string, role: "admin" | "member") {
-    if (!selectedRoom?._id) return;
-    try {
-      await api.patch(`/api/rooms/${selectedRoom._id}/members/${memberUserId}/role`, { role });
-      await loadRooms();
-      message.success(vi.chat.roleUpdated);
-    } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, vi.errors.roleUpdateFail));
-    }
-  }
 
   async function handleLogout() {
     await logout();
     navigate("/login");
   }
 
-  async function addMemberToGroup(memberUserId: string) {
-    if (!selectedRoom || selectedRoom.type !== "group") {
-      return;
-    }
-    try {
-      setAddingMemberId(memberUserId);
-      await api.post(`/api/rooms/${selectedRoom._id}/members`, { memberUserId });
-      message.success(vi.errors.groupInviteSent);
-    } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, vi.errors.memberAddFail));
-    } finally {
-      setAddingMemberId("");
-    }
-  }
 
-  async function acceptGroupInviteAction(inviteId: string) {
-    try {
-      setGroupInviteActionId(inviteId);
-      await api.post(`/api/rooms/group-invites/${inviteId}/accept`);
-      message.success(vi.errors.groupInviteAcceptOk);
-      await loadPendingGroupInvites();
-      await loadRooms();
-    } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, vi.errors.groupInviteAcceptFail));
-    } finally {
-      setGroupInviteActionId("");
-    }
-  }
-
-  async function declineGroupInviteAction(inviteId: string) {
-    try {
-      setGroupInviteActionId(inviteId);
-      await api.post(`/api/rooms/group-invites/${inviteId}/decline`);
-      message.success(vi.errors.groupInviteDeclineOk);
-      await loadPendingGroupInvites();
-    } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, vi.errors.groupInviteDeclineFail));
-    } finally {
-      setGroupInviteActionId("");
-    }
-  }
-
-  const selectedRoom = rooms.find((room) => room._id === selectedRoomId);
+  const selectedRoom = useAppSelector(selectSelectedRoom);
+  const {
+    acceptGroupInviteAction,
+    addMemberToGroup,
+    createRoomByName,
+    declineGroupInviteAction,
+    handleRequest,
+    leaveGroupRoom,
+    openDirectRoom,
+    patchMemberRole,
+    patchRoomPrefs,
+    pinThreadMessage,
+    recallMessage,
+    removeFriend,
+    removeGroupMember,
+    sendFriendRequest,
+    toggleMessageReaction,
+    unpinThreadMessage,
+  } = useChatDomainActions({
+    dispatch,
+    selectedRoomId,
+    selectedRoom,
+    isNarrowLayout,
+    setMobileLeftOpen,
+    setChatThreadLoading,
+    setSelectedRoomId,
+    setRooms,
+    setMessages,
+    setRoomName,
+    setDiscoveryList,
+    setAddingMemberId,
+    setGroupInviteActionId,
+    setRemovingMemberId,
+    setLeaveGroupLoading,
+    setIsRoomInfoOpen,
+    setLeaveOwnerModalOpen,
+    setLeaveTransferUserId,
+    updateCurrentUser,
+    loadRooms,
+    loadFriends,
+    loadIncomingRequests,
+    loadOutgoingRequests,
+    loadPendingGroupInvites,
+  });
   const currentRoomName = selectedRoom
     ? getRoomDisplayName(selectedRoom, user?._id || "")
     : vi.chat.noRoom;
@@ -1040,84 +674,29 @@ export default function ChatPage() {
     () => new Set(groupMembers.map((member) => member.userId._id)),
     [groupMembers],
   );
-  const friendsSafe = useMemo(() => friends.filter(isValidFriendUser), [friends]);
+  const friendsSafe = useAppSelector(selectFriendsSafe);
   const addableFriendsForGroup = useMemo(
     () => friendsSafe.filter((friend) => !groupMemberIdSet.has(friend._id)),
     [friendsSafe, groupMemberIdSet],
   );
-  const friendIdSet = useMemo(
-    () => new Set(friendsSafe.map((item) => item._id)),
-    [friendsSafe],
+  const visibleDiscoveryResults = useAppSelector((state) =>
+    selectVisibleDiscoveryResults(state, discoveryList),
   );
-  const outgoingIdSet = useMemo(
-    () =>
-      new Set(
-        outgoingRequests
-          .map((item) => item.toUserId?._id)
-          .filter((id): id is string => typeof id === "string" && id.length > 0),
-      ),
-    [outgoingRequests],
-  );
-  const visibleDiscoveryResults = useMemo(
-    () =>
-      discoveryList.filter(
-        (item) => !friendIdSet.has(item._id) && !outgoingIdSet.has(item._id),
-      ),
-    [discoveryList, friendIdSet, outgoingIdSet],
-  );
+  const sortedGroupRooms = useAppSelector(selectSortedGroupRooms);
 
-  const sortedGroupRooms = useMemo(() => {
-    const pinIds = new Set(
-      (user?.chatRoomPrefs || [])
-        .filter((p) => p.sidebarPinned)
-        .map((p) => p.roomId),
-    );
-    const list = rooms.filter((room) => room.type === "group");
-    return [...list].sort((a, b) => {
-      const ap = pinIds.has(a._id) ? 1 : 0;
-      const bp = pinIds.has(b._id) ? 1 : 0;
-      if (ap !== bp) return bp - ap;
-      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-    });
-  }, [rooms, user?.chatRoomPrefs]);
+  const unreadByFriendId = useAppSelector((state) => selectUnreadByFriendId(state, currentUserId));
 
-  const unreadByFriendId = useMemo(() => {
-    const out: Record<string, number> = {};
-    for (const room of rooms) {
-      if (room.type !== "direct") continue;
-      const other = room.members.find(
-        (m) => isRoomMemberPopulated(m) && m.userId._id !== currentUserId,
-      )?.userId;
-      if (other) {
-        out[other._id] = unreadByRoomId[room._id] ?? 0;
-      }
-    }
-    return out;
-  }, [rooms, unreadByRoomId, currentUserId]);
-
-  const myRoomRole = useMemo(() => {
-    if (!selectedRoom) return null;
-    const me = selectedRoom.members.find(
-      (m) => isRoomMemberPopulated(m) && m.userId._id === currentUserId,
-    );
-    return me?.role ?? null;
-  }, [selectedRoom, currentUserId]);
+  const myRoomRole = useAppSelector((state) => selectMyRoomRole(state, currentUserId));
 
   const canAddGroupMembers =
     selectedRoom?.type === "group" && myRoomRole != null && ["owner", "admin"].includes(myRoomRole);
 
   const isRoomOwner = myRoomRole === "owner";
 
-  const roomPref = useMemo(() => {
-    if (!selectedRoomId || !user?.chatRoomPrefs) return null;
-    return user.chatRoomPrefs.find((p) => p.roomId === selectedRoomId) ?? null;
-  }, [selectedRoomId, user?.chatRoomPrefs]);
-
-  const canPinMessagesInThread = useMemo(() => {
-    if (!selectedRoom) return false;
-    if (selectedRoom.type === "direct") return true;
-    return myRoomRole != null && ["owner", "admin"].includes(myRoomRole);
-  }, [selectedRoom, myRoomRole]);
+  const roomPref = useAppSelector(selectRoomPref);
+  const canPinMessagesInThread = useAppSelector((state) =>
+    selectCanPinMessagesInThread(state, currentUserId),
+  );
 
   function roleLabel(role: string) {
     if (role === "owner") return vi.chat.roleOwner;
@@ -1134,40 +713,6 @@ export default function ChatPage() {
     return true;
   }
 
-  async function removeGroupMember(memberUserId: string) {
-    if (!selectedRoom || selectedRoom.type !== "group") return;
-    try {
-      setRemovingMemberId(memberUserId);
-      await api.delete(`/api/rooms/${selectedRoom._id}/members/${memberUserId}`);
-      message.success(vi.chat.memberRemovedOk);
-      await loadRooms();
-    } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, vi.errors.memberRemoveFail));
-    } finally {
-      setRemovingMemberId("");
-    }
-  }
-
-  async function leaveGroupRoom(newOwnerUserId?: string) {
-    if (!selectedRoom || selectedRoom.type !== "group") return;
-    const roomId = selectedRoom._id;
-    try {
-      setLeaveGroupLoading(true);
-      await api.post(`/api/rooms/${roomId}/leave`, newOwnerUserId ? { newOwnerUserId } : {});
-      message.success(vi.chat.leaveGroupOk);
-      await loadRooms();
-      setSelectedRoomId((cur) => (cur === roomId ? "" : cur));
-      setIsRoomInfoOpen(false);
-      setLeaveOwnerModalOpen(false);
-      setLeaveTransferUserId("");
-    } catch (error: unknown) {
-      message.error(getApiErrorMessage(error, vi.errors.leaveGroupFail));
-      throw error;
-    } finally {
-      setLeaveGroupLoading(false);
-    }
-  }
-
   const sidebarBody = (
     <Suspense
       fallback={
@@ -1179,7 +724,7 @@ export default function ChatPage() {
       <ChatSidebarBody
         roomName={roomName}
         onRoomNameChange={setRoomName}
-        onCreateRoom={() => void createRoom()}
+        onCreateRoom={() => void createRoomByName(roomName)}
         groupRoomsOnly={sortedGroupRooms}
         selectedRoomId={selectedRoomId}
         onSelectRoom={(roomId) => {
@@ -1204,25 +749,27 @@ export default function ChatPage() {
   const sidebarCardTitle = vi.chat.greeting(user?.username || "");
 
   const settingsDrawerContent = (
-    <ChatSettingsPanel
-      uiPreset={uiPreset}
-      onUiPresetChange={setUiPreset}
-      theme={theme}
-      onThemeChange={setTheme}
-      desktopNotify={desktopNotify}
-      onDesktopNotifyChange={async (checked) => {
-        if (checked) {
-          const p = await requestNotificationPermission();
-          if (p !== "granted") {
-            message.warning(vi.chat.notifyDenied);
-            return;
+    <Suspense fallback={<Spin />}>
+      <ChatSettingsPanel
+        uiPreset={uiPreset}
+        onUiPresetChange={setUiPreset}
+        theme={theme}
+        onThemeChange={setTheme}
+        desktopNotify={desktopNotify}
+        onDesktopNotifyChange={async (checked) => {
+          if (checked) {
+            const p = await requestNotificationPermission();
+            if (p !== "granted") {
+              message.warning(vi.chat.notifyDenied);
+              return;
+            }
           }
-        }
-        setDesktopNotify(checked);
-      }}
-      soundNotify={soundNotify}
-      onSoundNotifyChange={setSoundNotify}
-    />
+          setDesktopNotify(checked);
+        }}
+        soundNotify={soundNotify}
+        onSoundNotifyChange={setSoundNotify}
+      />
+    </Suspense>
   );
 
   const searchPanelContent = (
@@ -1671,7 +1218,7 @@ export default function ChatPage() {
         />
         <Flex vertical gap={16} className="chat-main-stack">
           <ChatThreadHeader
-            selectedRoom={selectedRoom}
+            selectedRoom={selectedRoom ?? undefined}
             currentRoomName={currentRoomName}
             directCounterpart={directCounterpart}
             directHeaderPresence={directHeaderPresence}
@@ -1734,7 +1281,7 @@ export default function ChatPage() {
               <ChatMessageList
                 messages={messages}
                 currentUserId={currentUserId}
-                selectedRoom={selectedRoom}
+                selectedRoom={selectedRoom ?? undefined}
                 apiBaseUrl={API_BASE_URL}
                 hasMore={messagesHasMore}
                 loadingOlder={loadingOlder}
@@ -1839,15 +1386,17 @@ export default function ChatPage() {
         </Space>
       </Modal>
 
-      <PersonalProfileModal
-        open={profileModalOpen}
-        onClose={() => setProfileModalOpen(false)}
-        user={user}
-        apiBaseUrl={API_BASE_URL}
-        uploadMaxMb={UPLOAD_MAX_MB}
-        uploadMaxBytes={UPLOAD_MAX_BYTES}
-        onUserUpdated={handleProfileUserUpdated}
-      />
+      <Suspense fallback={null}>
+        <PersonalProfileModal
+          open={profileModalOpen}
+          onClose={() => setProfileModalOpen(false)}
+          user={user}
+          apiBaseUrl={API_BASE_URL}
+          uploadMaxMb={UPLOAD_MAX_MB}
+          uploadMaxBytes={UPLOAD_MAX_BYTES}
+          onUserUpdated={handleProfileUserUpdated}
+        />
+      </Suspense>
 
       <Modal
         title={vi.chat.leaveGroupOwnerTitle}

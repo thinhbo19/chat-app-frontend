@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
-import { ACCESS_TOKEN_REFRESHED_EVENT, getAccessToken } from "../services/api";
 
 type UseChatSocketConnectionOptions = {
   apiBaseUrl: string;
@@ -11,14 +10,7 @@ export function useChatSocketConnection({ apiBaseUrl }: UseChatSocketConnectionO
   const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
-    const token = getAccessToken();
-    if (!token) {
-      setSocket(null);
-      return;
-    }
-
     const nextSocket = io(apiBaseUrl, {
-      auth: { token },
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
@@ -26,6 +18,7 @@ export function useChatSocketConnection({ apiBaseUrl }: UseChatSocketConnectionO
       timeout: 20000,
       autoConnect: false,
       transports: ["websocket", "polling"],
+      withCredentials: true,
     });
 
     setSocket(nextSocket);
@@ -40,25 +33,6 @@ export function useChatSocketConnection({ apiBaseUrl }: UseChatSocketConnectionO
   useEffect(() => {
     socketRef.current = socket;
   }, [socket]);
-
-  useEffect(() => {
-    const onTokenRefreshed = () => {
-      const currentSocket = socketRef.current;
-      if (!currentSocket) return;
-
-      const token = getAccessToken();
-      if (!token) return;
-
-      currentSocket.auth = { token };
-      if (currentSocket.connected) {
-        currentSocket.disconnect();
-      }
-      currentSocket.connect();
-    };
-
-    window.addEventListener(ACCESS_TOKEN_REFRESHED_EVENT, onTokenRefreshed);
-    return () => window.removeEventListener(ACCESS_TOKEN_REFRESHED_EVENT, onTokenRefreshed);
-  }, []);
 
   return { socket, socketRef };
 }

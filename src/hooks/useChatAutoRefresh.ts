@@ -8,7 +8,16 @@ type UseChatAutoRefreshOptions = {
   loadOutgoingRequests: AsyncCallback;
   loadPendingGroupInvites: AsyncCallback;
   loadRooms: AsyncCallback;
+  isSocketConnected?: boolean;
 };
+
+export function shouldRunChatPolling(
+  visibilityState: DocumentVisibilityState,
+  isSocketConnected: boolean,
+) {
+  if (visibilityState !== "visible") return false;
+  return !isSocketConnected;
+}
 
 export function useChatAutoRefresh({
   loadFriends,
@@ -16,22 +25,35 @@ export function useChatAutoRefresh({
   loadOutgoingRequests,
   loadPendingGroupInvites,
   loadRooms,
+  isSocketConnected = false,
 }: UseChatAutoRefreshOptions) {
   useEffect(() => {
     const interval = window.setInterval(() => {
+      if (!shouldRunChatPolling(document.visibilityState, isSocketConnected)) {
+        return;
+      }
       loadFriends().catch(() => null);
       loadIncomingRequests().catch(() => null);
       loadOutgoingRequests().catch(() => null);
       loadPendingGroupInvites().catch(() => null);
-    }, 5000);
+    }, 15_000);
 
     return () => window.clearInterval(interval);
-  }, [loadFriends, loadIncomingRequests, loadOutgoingRequests, loadPendingGroupInvites]);
+  }, [
+    loadFriends,
+    loadIncomingRequests,
+    loadOutgoingRequests,
+    loadPendingGroupInvites,
+    isSocketConnected,
+  ]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
       loadRooms().catch(() => null);
-    }, 25_000);
+    }, 45_000);
 
     return () => window.clearInterval(interval);
   }, [loadRooms]);

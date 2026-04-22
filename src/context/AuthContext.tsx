@@ -1,15 +1,14 @@
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import type { ReactNode } from "react";
 import {
   api,
   clearAuthData,
-  getAccessToken,
-  getStoredUser,
-  getRefreshToken,
   setAuthData,
   setStoredUser,
 } from "../services/api";
 import type { AuthUser } from "../types";
+import { useAppDispatch, useAppSelector } from "../store/hooks";
+import { setUser } from "../store/authSlice";
 
 type AuthContextType = {
   user: AuthUser | null;
@@ -25,10 +24,13 @@ type AuthContextType = {
   logout: () => Promise<void>;
 };
 
-const AuthContext = createContext<AuthContextType | null>(null);
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(getStoredUser<AuthUser>());
+  return <>{children}</>;
+}
+
+export function useAuth(): AuthContextType {
+  const dispatch = useAppDispatch();
+  const user = useAppSelector((state) => state.auth.user);
 
   const register = useCallback(async (payload: {
     username: string;
@@ -44,41 +46,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }) => {
     const response = await api.post("/api/auth/login", payload);
     setAuthData(response.data);
-    setUser(response.data.user);
-  }, []);
+    dispatch(setUser(response.data.user));
+  }, [dispatch]);
 
   const loadProfile = useCallback(async () => {
-    const token = getAccessToken();
-    if (!token) {
-      setUser(null);
-      return;
+    try {
+      const response = await api.get<{ user: AuthUser }>("/api/auth/me");
+      const u = response.data.user;
+      dispatch(setUser(u));
+      setStoredUser(u);
+    } catch (_error) {
+      dispatch(setUser(null));
+      clearAuthData();
     }
-
-    const response = await api.get<{ user: AuthUser }>("/api/auth/me");
-    const u = response.data.user;
-    setUser(u);
-    setStoredUser(u);
-  }, []);
+  }, [dispatch]);
 
   const updateCurrentUser = useCallback((u: AuthUser) => {
-    setUser(u);
+    dispatch(setUser(u));
     setStoredUser(u);
-  }, []);
+  }, [dispatch]);
 
   const logout = useCallback(async () => {
-    const refreshToken = getRefreshToken();
-    if (refreshToken) {
-      try {
-        await api.post("/api/auth/logout", { refreshToken });
-      } catch (_error) {
-        // Ignore network errors on logout cleanup.
-      }
+    try {
+      await api.post("/api/auth/logout", {});
+    } catch (_error) {
+      // Ignore network errors on logout cleanup.
     }
     clearAuthData();
-    setUser(null);
-  }, []);
+    dispatch(setUser(null));
+  }, [dispatch]);
 
-  const value = useMemo(
+  return useMemo(
     () => ({
       user,
       isAuthenticated: Boolean(user),
@@ -90,14 +88,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }),
     [login, logout, register, loadProfile, updateCurrentUser, user],
   );
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-export function useAuth() {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth must be used within AuthProvider");
-  }
-  return context;
 }

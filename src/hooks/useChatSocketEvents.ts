@@ -1,7 +1,6 @@
 import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { message, notification } from "antd";
 import type { Socket } from "socket.io-client";
-import { getAccessToken } from "../services/api";
 import { playMessageBeep } from "../utils/messageSound";
 import { isValidFriendUser } from "../utils/friendUser";
 import { isRoomMemberPopulated } from "../utils/roomMember";
@@ -28,6 +27,12 @@ type UseChatSocketEventsOptions = {
   setMessagesHasMore: Dispatch<SetStateAction<boolean>>;
 };
 
+const SOCKET_ERROR_TOAST_COOLDOWN_MS = 7000;
+
+export function shouldShowSocketErrorToast(lastShownAt: number, now: number) {
+  return now - lastShownAt >= SOCKET_ERROR_TOAST_COOLDOWN_MS;
+}
+
 export function useChatSocketEvents({
   socket,
   selectedRoomIdRef,
@@ -49,17 +54,18 @@ export function useChatSocketEvents({
 }: UseChatSocketEventsOptions) {
   useEffect(() => {
     if (!socket) return;
+    let lastSocketErrorToastAt = 0;
 
     const handleConnect = () => {
       void loadRooms();
       void loadPendingGroupInvites();
     };
     const handleConnectError = (error: Error) => {
-      const latestToken = getAccessToken();
-      if (latestToken) {
-        socket.auth = { token: latestToken };
+      const now = Date.now();
+      if (shouldShowSocketErrorToast(lastSocketErrorToastAt, now)) {
+        lastSocketErrorToastAt = now;
+        message.error(vi.errors.socket(error.message));
       }
-      message.error(vi.errors.socket(error.message));
     };
 
     function previewIncoming(incomingMessage: ChatMessage) {
