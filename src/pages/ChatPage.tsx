@@ -8,7 +8,6 @@ import {
   useState,
 } from "react";
 import { ChatComposeRow, type ChatComposeRowHandle } from "../components/chat/ChatComposeRow";
-import { io, Socket } from "socket.io-client";
 import {
   FiCheck,
   FiClock,
@@ -42,10 +41,9 @@ import {
   Switch,
   Typography,
   message,
-  notification,
 } from "antd";
 import { useNavigate } from "react-router-dom";
-import { ACCESS_TOKEN_REFRESHED_EVENT, api, getAccessToken } from "../services/api";
+import { api } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { AvatarWithStatus } from "../components/AvatarWithStatus";
 import { PersonalProfileModal } from "../components/profile/PersonalProfileModal";
@@ -61,11 +59,14 @@ const ChatMessageList = lazy(() =>
 import { useChatSettings } from "../context/ChatSettingsContext";
 import { getApiErrorMessage } from "../utils/apiError";
 import { formatChatHeaderPresence } from "../utils/formatPresence";
-import { playMessageBeep, unlockMessageAudio } from "../utils/messageSound";
+import { unlockMessageAudio } from "../utils/messageSound";
 import { vi } from "../strings/vi";
 import { isValidFriendUser } from "../utils/friendUser";
 import { resolveMediaUrl } from "../utils/mediaUrl";
 import { isRoomMemberPopulated } from "../utils/roomMember";
+import { useChatAutoRefresh } from "../hooks/useChatAutoRefresh";
+import { useChatSocketConnection } from "../hooks/useChatSocketConnection";
+import { useChatSocketEvents } from "../hooks/useChatSocketEvents";
 import type {
   AuthUser,
   ChatMessage,
@@ -150,8 +151,7 @@ export default function ChatPage() {
   const videoInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
 
-  const [socket, setSocket] = useState<Socket | null>(null);
-  const socketRef = useRef<Socket | null>(null);
+  const { socket, socketRef } = useChatSocketConnection({ apiBaseUrl: API_BASE_URL });
   const [isNarrowLayout, setIsNarrowLayout] = useState(false);
   /** Mobile (narrow): single left drawer = sidebar + cài đặt/tìm kiếm. Desktop: chỉ dùng cho drawer phụ. */
   const [mobileLeftOpen, setMobileLeftOpen] = useState(false);
@@ -233,52 +233,6 @@ export default function ChatPage() {
       setMobileLeftOpen(false);
     }
   }, [isNarrowLayout]);
-
-  useEffect(() => {
-    const token = getAccessToken();
-    if (!token) {
-      setSocket(null);
-      return;
-    }
-
-    const nextSocket = io(API_BASE_URL, {
-      auth: { token },
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 15000,
-      timeout: 20000,
-      autoConnect: false,
-      transports: ["websocket", "polling"],
-    });
-    setSocket(nextSocket);
-    nextSocket.connect();
-
-    return () => {
-      nextSocket.disconnect();
-      setSocket(null);
-    };
-  }, []);
-
-  useEffect(() => {
-    socketRef.current = socket;
-  }, [socket]);
-
-  useEffect(() => {
-    const onTokenRefreshed = () => {
-      const s = socketRef.current;
-      if (!s) return;
-      const t = getAccessToken();
-      if (!t) return;
-      s.auth = { token: t };
-      if (s.connected) {
-        s.disconnect();
-      }
-      s.connect();
-    };
-    window.addEventListener(ACCESS_TOKEN_REFRESHED_EVENT, onTokenRefreshed);
-    return () => window.removeEventListener(ACCESS_TOKEN_REFRESHED_EVENT, onTokenRefreshed);
-  }, []);
 
   const loadRooms = useCallback(async () => {
     const response = await api.get("/api/rooms/my");
@@ -500,258 +454,33 @@ export default function ChatPage() {
     loadRooms,
   ]);
 
-  useEffect(() => {
-    if (!socket) return;
-
-    const handleConnect = () => {
-      void loadRooms();
-      void loadPendingGroupInvites();
-    };
-    const handleConnectError = (error: Error) => {
-      const latestToken = getAccessToken();
-      if (latestToken) {
-        socket.auth = { token: latestToken };
-      }
-      message.error(vi.errors.socket(error.message));
-    };
-
-    function previewIncoming(m: ChatMessage) {
-      if (m.deleted) return vi.preview.recalled;
-      if (m.contentType === "image") return vi.preview.image;
-      if (m.contentType === "video") return vi.preview.video;
-      if (m.contentType === "audio") return vi.preview.audio;
-      return (m.text || "").slice(0, 120) || vi.preview.message;
-    }
-
-    const handleNewMessage = (incoming: ChatMessage) => {
-      const roomId = selectedRoomIdRef.current;
-      const incomingRoomId = String(incoming.roomId);
-      if (incomingRoomId === roomId) {
-        setMessages((prev) => {
-          if (prev.some((p) => p.id === incoming.id)) return prev;
-          return [...prev, incoming];
-        });
-      }
-      const myId = user?._id ? String(user._id) : "";
-      const senderId = String(incoming.sender.id || "");
-      const fromOther = Boolean(myId && senderId && senderId !== myId);
-      if (fromOther && incomingRoomId !== roomId) {
-        setUnreadByRoomId((prev) => ({
-          ...prev,
-          [incomingRoomId]: (prev[incomingRoomId] || 0) + 1,
-        }));
-      }
-      if (!fromOther) return;
-      const prefs = userRef.current?.chatRoomPrefs;
-      const mutedRoom = Boolean(prefs?.find((x) => x.roomId === incomingRoomId)?.muted);
-      const { soundNotify: snd, desktopNotify: dsk } = settingsRef.current;
-      const isCurrentRoom = incomingRoomId === roomId;
-      if (!mutedRoom) {
-        if (!isCurrentRoom) {
-          if (document.visibilityState === "visible") {
-            notification.info({
-              key: `incoming-${incomingRoomId}`,
-              message: incoming.sender.username,
-              description: previewIncoming(incoming),
-              placement: "topRight",
-              duration: 4.5,
-            });
-          } else if (
-            dsk &&
-            typeof Notification !== "undefined" &&
-            Notification.permission === "granted"
-          ) {
-            new Notification(incoming.sender.username, {
-              body: previewIncoming(incoming),
-              tag: incoming.id,
-            });
-          }
-        }
-        if (snd && (!isCurrentRoom || document.visibilityState === "hidden")) {
-          playMessageBeep();
-        }
-      }
-    };
-
-    const handleMessageUpdated = (updated: ChatMessage) => {
-      setMessages((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-    };
-
-    const handleReadReceipt = (payload: {
-      roomId: string;
-      userId: string;
-      messageId: string;
-      lastReadAt?: string;
-    }) => {
-      if (payload.roomId !== selectedRoomIdRef.current) return;
-      setReadStates((prev) => {
-        const i = prev.findIndex((s) => s.userId === payload.userId);
-        const next: RoomReadStateEntry = {
-          userId: payload.userId,
-          lastReadMessageId: payload.messageId,
-          lastReadAt: payload.lastReadAt,
-        };
-        if (i === -1) return [...prev, next];
-        const copy = [...prev];
-        copy[i] = { ...copy[i], ...next };
-        return copy;
-      });
-    };
-
-    const handleUserStatus = (payload: {
-      userId: string;
-      status: "online" | "offline";
-      lastSeenAt?: string;
-    }) => {
-      setFriends((prev) =>
-        prev
-          .filter(isValidFriendUser)
-          .map((f) => {
-            if (f._id !== payload.userId) return f;
-            const next: FriendUser = { ...f, status: payload.status };
-            if (payload.lastSeenAt) {
-              next.lastSeenAt = payload.lastSeenAt;
-            }
-            return next;
-          }),
-      );
-      setRooms((prev) =>
-        prev.map((room) => ({
-          ...room,
-          members: room.members.map((mem) => {
-            if (!isRoomMemberPopulated(mem) || mem.userId._id !== payload.userId) return mem;
-            const u = { ...mem.userId, status: payload.status };
-            if (payload.lastSeenAt) {
-              u.lastSeenAt = payload.lastSeenAt;
-            }
-            return { ...mem, userId: u };
-          }),
-        })),
-      );
-    };
-
-    const handleSystemMessage = () => null;
-    const handleFriendRequestReceived = () => {
-      loadIncomingRequests().catch(() => null);
-      message.info(vi.notify.friendRequest);
-    };
-    const handleGroupInviteReceived = () => {
-      loadPendingGroupInvites().catch(() => null);
-    };
-    const handleFriendshipUpdated = () => {
-      loadFriends().catch(() => null);
-      loadIncomingRequests().catch(() => null);
-      loadOutgoingRequests().catch(() => null);
-      message.success(vi.notify.friendsUpdated);
-    };
-    const handleFriendRequestUpdated = () => {
-      loadIncomingRequests().catch(() => null);
-      loadOutgoingRequests().catch(() => null);
-    };
-    const handleFriendshipRemoved = () => {
-      loadFriends().catch(() => null);
-      loadOutgoingRequests().catch(() => null);
-      message.info(vi.notify.friendshipRemoved);
-    };
-    const handleFriendDataChanged = () => {
-      loadFriends().catch(() => null);
-      loadIncomingRequests().catch(() => null);
-      loadOutgoingRequests().catch(() => null);
-      loadPendingGroupInvites().catch(() => null);
-    };
-    const handleRoomListChanged = () => {
-      loadRooms().catch(() => null);
-    };
-    const handleRoomPinsUpdated = (payload: { roomId: string; pinnedMessageIds: string[] }) => {
-      setRooms((prev) =>
-        prev.map((r) =>
-          r._id === payload.roomId ? { ...r, pinnedMessageIds: payload.pinnedMessageIds } : r,
-        ),
-      );
-    };
-    const handleDirectRoomRemoved = (payload: { roomId?: string }) => {
-      if (payload?.roomId && payload.roomId === selectedRoomIdRef.current) {
-        setSelectedRoomId("");
-        setMessages([]);
-        setReadStates([]);
-        setMessagesHasMore(false);
-      }
-      loadRooms().catch(() => null);
-    };
-
-    socket.on("connect", handleConnect);
-    socket.on("connect_error", handleConnectError);
-    socket.on("receive_message", handleNewMessage);
-    socket.on("message_updated", handleMessageUpdated);
-    socket.on("read_receipt", handleReadReceipt);
-    socket.on("user_status", handleUserStatus);
-    socket.on("system_message", handleSystemMessage);
-    socket.on("friend_request_received", handleFriendRequestReceived);
-    socket.on("group_invite_received", handleGroupInviteReceived);
-    socket.on("friendship_updated", handleFriendshipUpdated);
-    socket.on("friend_request_updated", handleFriendRequestUpdated);
-    socket.on("friendship_removed", handleFriendshipRemoved);
-    socket.on("friend_data_changed", handleFriendDataChanged);
-    socket.on("room_list_changed", handleRoomListChanged);
-    socket.on("room_pins_updated", handleRoomPinsUpdated);
-    socket.on("direct_room_removed", handleDirectRoomRemoved);
-
-    return () => {
-      socket.off("connect", handleConnect);
-      socket.off("connect_error", handleConnectError);
-      socket.off("receive_message", handleNewMessage);
-      socket.off("message_updated", handleMessageUpdated);
-      socket.off("read_receipt", handleReadReceipt);
-      socket.off("user_status", handleUserStatus);
-      socket.off("system_message", handleSystemMessage);
-      socket.off("friend_request_received", handleFriendRequestReceived);
-      socket.off("group_invite_received", handleGroupInviteReceived);
-      socket.off("friendship_updated", handleFriendshipUpdated);
-      socket.off("friend_request_updated", handleFriendRequestUpdated);
-      socket.off("friendship_removed", handleFriendshipRemoved);
-      socket.off("friend_data_changed", handleFriendDataChanged);
-      socket.off("room_list_changed", handleRoomListChanged);
-      socket.off("room_pins_updated", handleRoomPinsUpdated);
-      socket.off("direct_room_removed", handleDirectRoomRemoved);
-    };
-  }, [
+  useChatSocketEvents({
     socket,
+    selectedRoomIdRef,
+    userRef,
+    settingsRef,
+    userId: user?._id,
+    loadRooms,
+    loadFriends,
+    loadIncomingRequests,
+    loadOutgoingRequests,
+    loadPendingGroupInvites,
+    setMessages,
+    setUnreadByRoomId,
+    setReadStates,
+    setFriends,
+    setRooms,
+    setSelectedRoomId,
+    setMessagesHasMore,
+  });
+
+  useChatAutoRefresh({
     loadFriends,
     loadIncomingRequests,
     loadOutgoingRequests,
     loadPendingGroupInvites,
     loadRooms,
-    user?._id,
-  ]);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      loadFriends().catch(() => null);
-      loadIncomingRequests().catch(() => null);
-      loadOutgoingRequests().catch(() => null);
-      loadPendingGroupInvites().catch(() => null);
-    }, 5000);
-
-    return () => window.clearInterval(interval);
-  }, [loadFriends, loadIncomingRequests, loadOutgoingRequests, loadPendingGroupInvites]);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      loadRooms().catch(() => null);
-    }, 25_000);
-    return () => window.clearInterval(interval);
-  }, [loadRooms]);
-
-  useEffect(() => {
-    const onVis = () => {
-      if (document.visibilityState === "visible") {
-        loadRooms().catch(() => null);
-        loadPendingGroupInvites().catch(() => null);
-      }
-    };
-    document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
-  }, [loadRooms, loadPendingGroupInvites]);
+  });
 
   useEffect(() => {
     if (!selectedRoomId) {
